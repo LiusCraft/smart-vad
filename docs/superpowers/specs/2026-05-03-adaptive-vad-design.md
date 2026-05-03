@@ -10,7 +10,7 @@ Add dynamic baseline adaptive threshold + RMS energy verification to the smart-v
 AdaptiveDetector  (vad/adaptive.go)
   ├── wraps *Detector
   ├── maintains rolling RMS energy window (30s, circular buffer)
-  ├── computes noise baseline (85th percentile)
+  ├── computes noise baseline (avg of quietest 10% frames)
   ├── maps baseline → adapted params (threshold, minSpeech, minSilence)
   ├── injects params via Detector setters
   └── post-filters segments by RMS energy
@@ -55,7 +55,7 @@ type AdaptiveConfig struct {
     DetectorConfig    Config
 
     WindowDuration    float64  // rolling window in seconds, default 30
-    Percentile        float64  // noise baseline percentile, default 0.85
+    NoiseFloorFrac    float64  // noise floor fraction, default 0.1 (average of bottom 10% frames)
     EnergyOffsetDB    float64  // post-filter offset, default 6
 
     // Adaptive range
@@ -95,7 +95,7 @@ func (a *AdaptiveDetector) Destroy() error
 ### Detect (batch mode)
 
 1. Compute per-frame RMS dB for entire `pcm`
-2. Sort & take P85 percentile → `baselineDB`
+2. Sort & average bottom `NoiseFloorFrac` (default 10%) → `baselineDB`
 3. `mapParams(baselineDB)` → threshold, minSpeechMs, minSilenceMs
 4. Inject params via inner setters
 5. `inner.Detect(pcm)` → raw result
@@ -171,12 +171,11 @@ Segment RMS (for post-filter): same formula, applied over the full segment.
 | Test | Description |
 |------|-------------|
 | `TestAdaptiveConfigValidation` | Config defaults and validation |
+| `TestAdaptiveConfigValidationCustom` | Custom values preserved by setDefaults |
 | `TestFrameRMS` | Known sine wave → expected dB value |
-| `TestBaselineComputation` | Synthetic frame energies → P85 matches expected |
+| `TestComputeBaseline` | Synthetic frame energies → noise floor average |
 | `TestMapParams` | Known baseline → expected threshold/minSpeech |
-| `TestBatchPostFilter` | Segments above/below baseline+offset → filtering behavior |
-| `TestStreamingRoundTrip` | Process + Flush with adaptive params |
-| `TestShortAudio` | Audio too short → error |
+| `TestFilterSegments` (+AllPass, +AllDiscard) | Segments above/below baseline+offset → filtering |
 
 Tests do not require an ONNX model (unit-test the algorithmic logic only).
 
