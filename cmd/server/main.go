@@ -172,6 +172,17 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		segFiles[i] = fname
 	}
 
+	var filteredPCMs [][]float32
+	if len(filteredSegments) > 0 {
+		fStarts := make([]float64, len(filteredSegments))
+		fEnds := make([]float64, len(filteredSegments))
+		for i, s := range filteredSegments {
+			fStarts[i] = s.Start
+			fEnds[i] = s.End
+		}
+		filteredPCMs = slice.Split(pcm, fStarts, fEnds, srInt)
+	}
+
 	duration := float64(len(pcm)) / float64(sr)
 	htmlSegments := make([]html.Segment, len(result.Segments))
 	for i, s := range result.Segments {
@@ -185,15 +196,16 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	var reportBuf bytes.Buffer
 	if err := html.Render(html.ReportData{
-		SampleRate:       srInt,
-		Duration:         duration,
-		PCM:              pcm,
-		VADProbs:         result.Probs,
-		Segments:         htmlSegments,
-		FilteredSegments: htmlFiltered,
-		SegmentFiles:     segFiles,
-		SegmentPCM:       segPCMs,
-		BackURL:          "/",
+		SampleRate:         srInt,
+		Duration:           duration,
+		PCM:                pcm,
+		VADProbs:           result.Probs,
+		Segments:           htmlSegments,
+		FilteredSegments:   htmlFiltered,
+		SegmentFiles:       segFiles,
+		SegmentPCM:         segPCMs,
+		FilteredSegmentPCM: filteredPCMs,
+		BackURL:            "/",
 	}, &reportBuf); err != nil {
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return

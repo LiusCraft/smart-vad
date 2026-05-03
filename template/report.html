@@ -87,6 +87,7 @@ const vadProbs = {{.VADProbsJSON}};
 const segments = {{.SegmentsJSON}};
 const filteredSegments = {{.FilteredSegmentsJSON}};
 const segmentAudios = {{.SegmentAudiosJSON}};
+const filteredSegmentAudios = {{.FilteredSegmentAudiosJSON}};
 const segmentFiles = {{.SegmentFilesJSON}};
 
 function pcmToWav(samples, sr) {
@@ -230,5 +231,31 @@ segments.forEach((s,i) => {
   grid.appendChild(card);
 });
 </script>
+{{if .FilteredCount}}<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const s = document.getElementById('segments');
+  const h = document.createElement('h2');
+  h.style.cssText = 'font-size:16px;margin:20px 0 12px;color:#ff6b6b';
+  h.textContent = 'Energy-Filtered Segments ({{.FilteredCount}})';
+  s.parentElement.insertBefore(h, s.nextSibling);
+  const g = document.createElement('div');
+  g.className = 'segments-grid';
+  g.style.cssText = 'margin-top:12px';
+  filteredSegments.forEach((seg, i) => {
+    const card = document.createElement('div');
+    card.className = 'segment-card';
+    card.style.borderLeft = '3px solid #ff6b6b';
+    card.innerHTML = '<h3>Filtered '+(i+1)+' <span class="time-range">'+seg.start.toFixed(2)+'s &ndash; '+seg.end.toFixed(2)+'s</span></h3>'
+      + '<p class="seg-label">Discarded by energy filter &middot; '+(seg.end-seg.start).toFixed(2)+'s</p>'
+      + (filteredSegmentAudios[i] ? '<audio controls src="'+filteredSegmentAudios[i]+'"></audio>' : '');
+    const aud = card.querySelector('audio');
+    if (aud) {
+      aud.playbackRate = parseFloat(document.getElementById('speedSelect').value);
+    }
+    g.appendChild(card);
+  });
+  s.parentElement.insertBefore(g, s.nextSibling.nextSibling);
+});
+</script>{{end}}
 </body>
 </html>

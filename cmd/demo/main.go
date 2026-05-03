@@ -133,6 +133,17 @@ func main() {
 		log.Printf("  wrote: %s", filename)
 	}
 
+	var filteredPCMs [][]float32
+	if len(filteredSegments) > 0 {
+		fStarts := make([]float64, len(filteredSegments))
+		fEnds := make([]float64, len(filteredSegments))
+		for i, s := range filteredSegments {
+			fStarts[i] = s.Start
+			fEnds[i] = s.End
+		}
+		filteredPCMs = slice.Split(pcm, fStarts, fEnds, sampleRate)
+	}
+
 	reportPath := filepath.Join(outDir, "report.html")
 	rf, err := os.Create(reportPath)
 	if err != nil {
@@ -152,14 +163,15 @@ func main() {
 	}
 
 	if err := html.Render(html.ReportData{
-		SampleRate:       sampleRate,
-		Duration:         duration,
-		PCM:              pcm,
-		VADProbs:         result.Probs,
-		Segments:         htmlSegments,
-		FilteredSegments: htmlFiltered,
-		SegmentFiles:     segFiles,
-		SegmentPCM:       segPCMs,
+		SampleRate:         sampleRate,
+		Duration:           duration,
+		PCM:                pcm,
+		VADProbs:           result.Probs,
+		Segments:           htmlSegments,
+		FilteredSegments:   htmlFiltered,
+		SegmentFiles:       segFiles,
+		SegmentPCM:         segPCMs,
+		FilteredSegmentPCM: filteredPCMs,
 	}, rf); err != nil {
 		log.Fatalf("render report: %v", err)
 	}
