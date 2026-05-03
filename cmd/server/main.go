@@ -17,13 +17,18 @@ import (
 	"github.com/liushunshun/smart-vad/vad"
 )
 
-var modelPath string
+var (
+	modelPath   string
+	useAdaptive bool
+)
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	model := flag.String("model", "silero_vad.onnx", "path to silero_vad.onnx")
+	adaptive := flag.Bool("adaptive", false, "enable adaptive VAD (dynamic baseline threshold)")
 	flag.Parse()
 	modelPath = *model
+	useAdaptive = *adaptive
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		log.Fatalf("model not found: %s", modelPath)
@@ -74,20 +79,6 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Close()
 
-	detector, err := vad.NewDetector(vad.Config{
-		ModelPath:            modelPath,
-		SampleRate:           16000,
-		Threshold:            0.5,
-		MinSilenceDurationMs: 100,
-		MinSpeechDurationMs:  100,
-		SpeechPadMs:          30,
-	})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("detector: %v", err), 500)
-		return
-	}
-	defer detector.Destroy()
-
 	af, err := os.Open(tmpFile)
 	if err != nil {
 		http.Error(w, "open temp failed", 500)
@@ -115,10 +106,50 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := detector.Detect(pcm)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("detect: %v", err), 500)
-		return
+	var result vad.Result
+
+	if useAdaptive {
+		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
+			DetectorConfig: vad.Config{
+				ModelPath:            modelPath,
+				SampleRate:           16000,
+				Threshold:            0.5,
+				MinSilenceDurationMs: 100,
+				MinSpeechDurationMs:  100,
+				SpeechPadMs:          30,
+			},
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("adaptive detector: %v", err), 500)
+			return
+		}
+		defer adaptDetector.Destroy()
+
+		result, err = adaptDetector.Detect(pcm)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("detect: %v", err), 500)
+			return
+		}
+	} else {
+		detector, err := vad.NewDetector(vad.Config{
+			ModelPath:            modelPath,
+			SampleRate:           16000,
+			Threshold:            0.5,
+			MinSilenceDurationMs: 100,
+			MinSpeechDurationMs:  100,
+			SpeechPadMs:          30,
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("detector: %v", err), 500)
+			return
+		}
+		defer detector.Destroy()
+
+		result, err = detector.Detect(pcm)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("detect: %v", err), 500)
+			return
+		}
 	}
 
 	starts := make([]float64, len(result.Segments))

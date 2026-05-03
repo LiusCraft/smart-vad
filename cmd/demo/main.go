@@ -21,6 +21,7 @@ func main() {
 	minSilence := flag.Int("min-silence", 100, "min silence duration in ms")
 	minSpeech := flag.Int("min-speech", 100, "min speech duration in ms")
 	padMs := flag.Int("pad", 30, "padding around segments in ms")
+	adaptive := flag.Bool("adaptive", false, "enable adaptive VAD (dynamic baseline threshold)")
 	flag.Parse()
 
 	if *input == "" || *model == "" {
@@ -54,22 +55,47 @@ func main() {
 	log.Printf("Loaded: %s (%d Hz, %d samples, %.2fs)",
 		*input, sampleRate, len(pcm), float64(len(pcm))/float64(sampleRate))
 
-	detector, err := vad.NewDetector(vad.Config{
-		ModelPath:            *model,
-		SampleRate:           sampleRate,
-		Threshold:            float32(*threshold),
-		MinSilenceDurationMs: *minSilence,
-		MinSpeechDurationMs:  *minSpeech,
-		SpeechPadMs:          *padMs,
-	})
-	if err != nil {
-		log.Fatalf("create detector: %v", err)
-	}
-	defer detector.Destroy()
+	var result vad.Result
 
-	result, err := detector.Detect(pcm)
-	if err != nil {
-		log.Fatalf("detect: %v", err)
+	if *adaptive {
+		log.Print("Adaptive VAD enabled")
+		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
+			DetectorConfig: vad.Config{
+				ModelPath:            *model,
+				SampleRate:           sampleRate,
+				Threshold:            float32(*threshold),
+				MinSilenceDurationMs: *minSilence,
+				MinSpeechDurationMs:  *minSpeech,
+				SpeechPadMs:          *padMs,
+			},
+		})
+		if err != nil {
+			log.Fatalf("create adaptive detector: %v", err)
+		}
+		defer adaptDetector.Destroy()
+
+		result, err = adaptDetector.Detect(pcm)
+		if err != nil {
+			log.Fatalf("detect: %v", err)
+		}
+	} else {
+		detector, err := vad.NewDetector(vad.Config{
+			ModelPath:            *model,
+			SampleRate:           sampleRate,
+			Threshold:            float32(*threshold),
+			MinSilenceDurationMs: *minSilence,
+			MinSpeechDurationMs:  *minSpeech,
+			SpeechPadMs:          *padMs,
+		})
+		if err != nil {
+			log.Fatalf("create detector: %v", err)
+		}
+		defer detector.Destroy()
+
+		result, err = detector.Detect(pcm)
+		if err != nil {
+			log.Fatalf("detect: %v", err)
+		}
 	}
 
 	log.Printf("Detected %d speech segments", len(result.Segments))
