@@ -13,7 +13,6 @@ import (
 	"github.com/go-audio/wav"
 	"github.com/liushunshun/smart-vad/html"
 	"github.com/liushunshun/smart-vad/slice"
-	tmpl "github.com/liushunshun/smart-vad/template"
 	"github.com/liushunshun/smart-vad/vad"
 )
 
@@ -38,7 +37,13 @@ func main() {
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(tmpl.Index))
+	var buf bytes.Buffer
+	if err := html.Render(html.ReportData{}, &buf); err != nil {
+		http.Error(w, "render failed", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
 }
 
 func handleAnalyze(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +206,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		SegmentPCM:         segPCMs,
 		FilteredSegmentPCM: filteredPCMs,
 		BackURL:            "/",
+		HasResults:         true,
 	}, &reportBuf); err != nil {
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return

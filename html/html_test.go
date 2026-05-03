@@ -16,6 +16,7 @@ func TestRender(t *testing.T) {
 		Segments:     []Segment{{Start: 0.2, End: 0.6}},
 		SegmentFiles: []string{"seg-001.wav"},
 		SegmentPCM:   [][]float32{make([]float32, 6400)},
+		HasResults:   true,
 	}
 
 	for i := range data.PCM {
@@ -48,6 +49,7 @@ func TestRenderEmptySegments(t *testing.T) {
 		Duration:   0.5,
 		PCM:        make([]float32, 8000),
 		VADProbs:   []float32{0.1, 0.1},
+		HasResults: true,
 	}
 
 	var buf bytes.Buffer
@@ -64,6 +66,7 @@ func TestRenderWritesFile(t *testing.T) {
 		SampleRate: 16000,
 		Duration:   1.0,
 		PCM:        make([]float32, 16000),
+		HasResults: true,
 	}
 
 	tmpFile := t.TempDir() + "/report.html"

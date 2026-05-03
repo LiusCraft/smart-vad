@@ -23,6 +23,7 @@ type ReportData struct {
 	SegmentPCM         [][]float32
 	FilteredSegmentPCM [][]float32
 	BackURL            string
+	HasResults         bool
 }
 
 type Segment struct {
@@ -31,6 +32,7 @@ type Segment struct {
 }
 
 type reportTmplData struct {
+	HasResults                bool
 	SampleRate                int
 	Duration                  string
 	PCMLength                 int
@@ -50,35 +52,39 @@ type reportTmplData struct {
 }
 
 func Render(data ReportData, w io.Writer) error {
-	dur := float64(len(data.PCM)) / float64(data.SampleRate)
-	windowMs := 1000.0 * 512 / float64(data.SampleRate)
-
-	speechRatio := "0%"
-	if len(data.Segments) > 0 && dur > 0 {
-		totalSpeech := 0.0
-		for _, s := range data.Segments {
-			totalSpeech += s.End - s.Start
-		}
-		speechRatio = fmt.Sprintf("%.1f%%", totalSpeech/dur*100)
+	tmplData := reportTmplData{
+		HasResults: data.HasResults,
 	}
 
-	tmplData := reportTmplData{
-		SampleRate:                data.SampleRate,
-		Duration:                  fmt.Sprintf("%.2f", dur),
-		PCMLength:                 len(data.PCM),
-		SegmentCount:              len(data.Segments),
-		WindowMs:                  fmt.Sprintf("%.0f", windowMs),
-		SpeechRatio:               speechRatio,
-		TotalTime:                 fmt.Sprintf("%d:%02d", int(dur)/60, int(dur)%60),
-		BackURL:                   data.BackURL,
-		WaveformJSON:              template.JS(encodeFloat32Array(data.PCM)),
-		VADProbsJSON:              template.JS(encodeFloat32Array(data.VADProbs)),
-		SegmentsJSON:              template.JS(encodeSegments(data.Segments)),
-		FilteredSegmentsJSON:      template.JS(encodeSegments(data.FilteredSegments)),
-		SegmentAudiosJSON:         template.JS(encodeSegmentAudios(data.SegmentPCM, data.SampleRate)),
-		FilteredSegmentAudiosJSON: template.JS(encodeSegmentAudios(data.FilteredSegmentPCM, data.SampleRate)),
-		SegmentFilesJSON:          template.JS(encodeStringArray(data.SegmentFiles)),
-		FilteredCount:             len(data.FilteredSegments),
+	if data.HasResults {
+		dur := float64(len(data.PCM)) / float64(data.SampleRate)
+		windowMs := 1000.0 * 512 / float64(data.SampleRate)
+
+		speechRatio := "0%"
+		if len(data.Segments) > 0 && dur > 0 {
+			totalSpeech := 0.0
+			for _, s := range data.Segments {
+				totalSpeech += s.End - s.Start
+			}
+			speechRatio = fmt.Sprintf("%.1f%%", totalSpeech/dur*100)
+		}
+
+		tmplData.SampleRate = data.SampleRate
+		tmplData.Duration = fmt.Sprintf("%.2f", dur)
+		tmplData.PCMLength = len(data.PCM)
+		tmplData.SegmentCount = len(data.Segments)
+		tmplData.WindowMs = fmt.Sprintf("%.0f", windowMs)
+		tmplData.SpeechRatio = speechRatio
+		tmplData.TotalTime = fmt.Sprintf("%d:%02d", int(dur)/60, int(dur)%60)
+		tmplData.BackURL = data.BackURL
+		tmplData.WaveformJSON = template.JS(encodeFloat32Array(data.PCM))
+		tmplData.VADProbsJSON = template.JS(encodeFloat32Array(data.VADProbs))
+		tmplData.SegmentsJSON = template.JS(encodeSegments(data.Segments))
+		tmplData.FilteredSegmentsJSON = template.JS(encodeSegments(data.FilteredSegments))
+		tmplData.SegmentAudiosJSON = template.JS(encodeSegmentAudios(data.SegmentPCM, data.SampleRate))
+		tmplData.FilteredSegmentAudiosJSON = template.JS(encodeSegmentAudios(data.FilteredSegmentPCM, data.SampleRate))
+		tmplData.SegmentFilesJSON = template.JS(encodeStringArray(data.SegmentFiles))
+		tmplData.FilteredCount = len(data.FilteredSegments)
 	}
 
 	tmpl, err := template.New("report").Parse(templates.Report)

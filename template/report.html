@@ -3,12 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart VAD Report</title>
+<title>Smart VAD</title>
 <script src="https://unpkg.com/wavesurfer.js@7"></script>
 <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:24px}
+.upload-section{background:#16213e;border-radius:12px;padding:20px;margin-bottom:24px}
+.upload-section h1{font-size:22px;margin-bottom:8px}
+.upload-section p{color:#888;font-size:14px;margin-bottom:16px}
+.upload-section form{display:flex;flex-direction:column;gap:14px}
+.upload-section input[type=file]{background:#0f3460;border:2px dashed #333;border-radius:10px;padding:32px 20px;text-align:center;cursor:pointer;color:#888;font-size:14px;transition:border-color .2s}
+.upload-section input[type=file]:hover{border-color:#4a9eff}
+.upload-section input[type=file]::file-selector-button{background:#4a9eff;color:#fff;border:none;border-radius:6px;padding:8px 16px;margin-right:12px;cursor:pointer;font-size:13px}
+.upload-section .adaptive-label{display:flex;align-items:center;gap:8px;cursor:pointer;color:#888;font-size:13px}
+.upload-section .adaptive-label input[type=checkbox]{width:16px;height:16px;accent-color:#4a9eff;cursor:pointer}
+.upload-section button{background:#2ecc71;color:#fff;border:none;border-radius:8px;padding:12px;font-size:15px;cursor:pointer;transition:background .2s}
+.upload-section button:hover{background:#27ae60}
+.upload-section button:disabled{background:#555;cursor:not-allowed}
+.upload-section .loading{display:none;text-align:center;color:#888;font-size:14px;margin-top:8px}
+.upload-section .loading .spinner{display:inline-block;width:20px;height:20px;border:3px solid #333;border-top-color:#4a9eff;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
 h1{font-size:24px;margin-bottom:4px}
 .subtitle{color:#888;font-size:14px;margin-bottom:20px}
 .section{background:#16213e;border-radius:12px;padding:20px;margin-bottom:20px}
@@ -19,8 +34,6 @@ h1{font-size:24px;margin-bottom:4px}
 .controls button:hover{background:#1a4a80}
 .controls .time{font-size:13px;color:#888;font-variant-numeric:tabular-nums}
 .controls select{margin-left:auto;background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer}
-.back-btn{display:inline-block;margin-bottom:16px;background:#0f3460;color:#4a9eff;border:1px solid #4a9eff;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;text-decoration:none;transition:background .2s}
-.back-btn:hover{background:#1a4a80}
 .chart-wrap{width:100%;height:130px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
 .chart-wrap canvas{width:100%;height:100%;display:block}
 #vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
@@ -38,9 +51,24 @@ h1{font-size:24px;margin-bottom:4px}
 </style>
 </head>
 <body>
+
+<div class="upload-section">
+<h1>Smart VAD</h1>
+<p>Upload a WAV file (16kHz mono) for voice activity detection and slicing</p>
+<form action="/analyze" method="post" enctype="multipart/form-data" id="form">
+<input type="file" name="audio" accept=".wav" required>
+<label class="adaptive-label">
+  <input type="checkbox" name="adaptive" value="true">
+  Adaptive VAD (dynamic noise floor, energy filter)
+</label>
+<button type="submit">{{if .HasResults}}Re-analyze{{else}}Analyze{{end}}</button>
+</form>
+<div class="loading" id="loading"><span class="spinner"></span>Processing...</div>
+</div>
+
+{{if .HasResults}}
 <h1>Smart VAD Report</h1>
 <p class="subtitle">{{.SampleRate}} Hz &middot; {{.Duration}}s &middot; {{.SegmentCount}} segments</p>
-{{if .BackURL}}<a href="{{.BackURL}}" class="back-btn">&larr; New Analysis</a>{{end}}
 
 <div class="stats">
 <div class="stat"><span class="val" style="color:#4a9eff">{{.Duration}}s</span><span class="lbl">Duration</span></div>
@@ -285,5 +313,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('.filtered-output audio').src = URL.createObjectURL(new Blob([out], {type:'audio/wav'}));
 })();
 </script>{{end}}
+{{end}}
+
+<script>
+document.getElementById('form').addEventListener('submit', function(e) {
+  this.querySelector('button').disabled = true;
+  document.getElementById('loading').style.display = 'block';
+});
+</script>
 </body>
 </html>
