@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live VAD</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:24px}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.header h1{font-size:22px}
+.header .nav a{color:#4a9eff;text-decoration:none;font-size:13px;margin-left:12px}
+.controls-bar{background:#16213e;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.controls-bar button{background:#0f3460;border:none;color:#fff;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:14px;transition:background .2s}
+.controls-bar button:hover{background:#1a4a80}
+.controls-bar button.primary{background:#2ecc71}
+.controls-bar button.primary:hover{background:#27ae60}
+.controls-bar button.danger{background:#e74c3c}
+.controls-bar button.danger:hover{background:#c0392b}
+.controls-bar button:disabled{background:#555;cursor:not-allowed}
+.controls-bar .status{display:flex;align-items:center;gap:8px;font-size:13px;color:#888}
+.controls-bar .status .dot{width:10px;height:10px;border-radius:50%;background:#555}
+.controls-bar .status .dot.recording{background:#e74c3c;animation:pulse 1s infinite}
+.controls-bar .status .dot.speech{background:#f1c40f}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.controls-bar .stat-val{font-size:13px;color:#888}
+.controls-bar .stat-val span{color:#e0e0e0;font-weight:600}
+.adaptive-label{display:flex;align-items:center;gap:6px;cursor:pointer;color:#888;font-size:13px}
+.adaptive-label input{width:16px;height:16px;accent-color:#4a9eff;cursor:pointer}
+.section{background:#16213e;border-radius:12px;padding:20px;margin-bottom:20px}
+.section h2{font-size:16px;margin-bottom:12px;color:#a0a0b0}
+.chart-wrap{width:100%;height:160px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
+.chart-wrap canvas{width:100%;height:100%;display:block}
+#vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
+.segments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.segment-card{background:#0f3460;border-radius:8px;padding:12px;font-size:13px;border-left:3px solid #2ecc71;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.segment-card .seg-header{display:flex;justify-content:space-between;margin-bottom:4px}
+.segment-card .seg-num{color:#4a9eff;font-weight:600}
+.segment-card .seg-time{color:#aaa}
+.segment-card .seg-dur{color:#888;font-size:12px}
+.adaptive-info{font-size:12px;color:#888;margin-top:8px;padding:8px 12px;background:#0f3460;border-radius:6px;display:none}
+.adaptive-info.show{display:block}
+.adaptive-info span{color:#e0e0e0}
+.flush-section{display:none}
+.flush-section.show{display:block}
+.flush-section audio{width:100%;margin-top:8px}
+.error-msg{background:#1a0a0a;border:1px solid #e74c3c;border-radius:8px;padding:12px 16px;color:#e74c3c;font-size:13px;margin-bottom:16px;display:none}
+</style>
+</head>
+<body>
+
+<div class="error-msg" id="errorMsg"></div>
+
+<div class="header">
+<h1>Live VAD</h1>
+<div class="nav"><a href="/">Upload Mode</a></div>
+</div>
+
+<div class="controls-bar">
+<button id="startBtn" class="primary">Start Mic</button>
+<button id="stopBtn" disabled class="danger">Stop</button>
+<button id="resetBtn" disabled>Reset</button>
+<div class="status">
+<span class="dot" id="statusDot"></span>
+<span id="statusText">Idle</span>
+</div>
+<div class="stat-val">
+Time: <span id="timeDisplay">0:00</span> &middot;
+Segments: <span id="segCount" style="color:#2ecc71">0</span>
+</div>
+<label class="adaptive-label">
+<input type="checkbox" id="adaptiveCb" checked>
+Adaptive VAD
+</label>
+</div>
+
+<div class="section">
+<h2>VAD Confidence</h2>
+<div class="chart-wrap">
+<canvas id="vadCanvas"></canvas>
+<div id="vadCursor"></div>
+</div>
+<div class="adaptive-info" id="adaptiveInfo">
+Baseline: <span id="baselineDB">-</span> dB &middot;
+Energy Offset: <span id="energyOffsetDB">-</span> dB &middot;
+Threshold: <span id="currentThreshold">0.50</span>
+</div>
+</div>
+
+<div class="section">
+<h2>Speech Segments</h2>
+<div id="segments" class="segments-grid"></div>
+<p id="noSegments" style="color:#555;font-size:13px">No speech segments detected yet</p>
+</div>
+
+<div class="section flush-section" id="flushSection">
+<h2>Merged Result</h2>
+<audio controls id="mergedAudio" style="width:100%"></audio>
+</div>
+
+<script>
+const SR = 16000;
+const CHART_DURATION = 60;
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const resetBtn = document.getElementById('resetBtn');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const timeDisplay = document.getElementById('timeDisplay');
+const segCount = document.getElementById('segCount');
+const adaptiveCb = document.getElementById('adaptiveCb');
+const adaptiveInfo = document.getElementById('adaptiveInfo');
+const baselineDB = document.getElementById('baselineDB');
+const energyOffsetDB = document.getElementById('energyOffsetDB');
+const currentThreshold = document.getElementById('currentThreshold');
+const canvas = document.getElementById('vadCanvas');
+const vadCursor = document.getElementById('vadCursor');
+const segmentsDiv = document.getElementById('segments');
+const noSegments = document.getElementById('noSegments');
+const flushSection = document.getElementById('flushSection');
+const mergedAudio = document.getElementById('mergedAudio');
+const errorMsg = document.getElementById('errorMsg');
+const ctx = canvas.getContext('2d');
+
+let ws, stream, audioCtx, processor, source, isRunning = false;
+let probs = [], segments = [], currentTime = 0, triggered = false, curThreshold = 0.5;
+let segmentCounter = 0;
+
+function showError(m) { errorMsg.textContent = m; errorMsg.style.display = 'block'; setTimeout(() => errorMsg.style.display = 'none', 5000); }
+function setStatus(t, c) { statusText.textContent = t; statusDot.className = 'dot' + (c ? ' ' + c : ''); }
+function fmt(t) { const m = Math.floor(t/60), s = Math.floor(t%60); return m + ':' + String(s).padStart(2,'0'); }
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws?adaptive=' + adaptiveCb.checked);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => setStatus('Connected');
+  ws.onmessage = e => { if (typeof e.data === 'string') handleMsg(JSON.parse(e.data)); };
+  ws.onclose = () => { if (isRunning) { setStatus('Disconnected'); stopMic(); } };
+  ws.onerror = () => showError('WebSocket error');
+}
+
+function handleMsg(msg) {
+  switch (msg.type) {
+    case 'probs':
+      if (msg.probs && msg.probs.length > 0) {
+        probs.push(...msg.probs);
+        currentTime = probs.length * 512 / SR;
+        redrawChart();
+      }
+      break;
+    case 'segment_start':
+      segments.push({start: msg.start, end: null});
+      break;
+    case 'segment_end':
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i].end === null) {
+          segments[i].end = msg.end;
+          segments[i].rms = msg.rms || 0;
+          segmentCounter++;
+          addSegmentCard(segments[i], segmentCounter);
+          break;
+        }
+      }
+      segCount.textContent = segments.filter(s => s.end !== null).length;
+      noSegments.style.display = 'none';
+      break;
+    case 'state':
+      triggered = msg.triggered;
+      if (triggered) statusDot.className = 'dot speech';
+      break;
+    case 'progress':
+      currentTime = msg.time;
+      timeDisplay.textContent = fmt(currentTime);
+      updateCursor(currentTime);
+      break;
+    case 'adaptive_info':
+      baselineDB.textContent = msg.baseline_db.toFixed(1);
+      energyOffsetDB.textContent = msg.energy_offset_db.toFixed(1);
+      adaptiveInfo.classList.add('show');
+      break;
+    case 'threshold':
+      curThreshold = msg.threshold;
+      currentThreshold.textContent = msg.threshold.toFixed(2);
+      break;
+    case 'flush_result':
+      isRunning = false;
+      flushSection.classList.add('show');
+      setStatus('Done');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      if (msg.merged_audio) mergedAudio.src = msg.merged_audio;
+      break;
+    case 'error':
+      showError(msg.message);
+      break;
+  }
+}
+
+function resizeCanvas() {
+  const p = canvas.parentElement;
+  canvas.width = p.clientWidth * 2;
+  canvas.height = p.clientHeight * 2;
+  canvas.style.width = p.clientWidth + 'px';
+  canvas.style.height = p.clientHeight + 'px';
+}
+
+function redrawChart() {
+  resizeCanvas();
+  ctx.scale(2, 2);
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const pad = {t: 10, b: 22, l: 40, r: 16};
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+  const dur = Math.max(currentTime || 1, 1);
+  const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
+  const viewDur = Math.min(dur, CHART_DURATION);
+
+  ctx.fillStyle = '#0f3460'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + ch / 4 * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillStyle = '#666'; ctx.fillText((1 - i * 0.25).toFixed(2), pad.l - 6, y + 4);
+  }
+  const ty = pad.t + ch * (1 - Math.min(1, Math.max(0, curThreshold)));
+  ctx.strokeStyle = 'rgba(255,107,107,0.4)'; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(pad.l, ty); ctx.lineTo(W - pad.r, ty); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(255,107,107,0.6)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('threshold ' + curThreshold.toFixed(2), W - pad.r - 82, ty - 4);
+
+  if (probs.length < 2) return;
+  ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 2; ctx.beginPath();
+  let first = true;
+  for (let i = 0; i < probs.length; i++) {
+    const t = i * 512 / SR;
+    if (t < scrollOff) continue;
+    const x = pad.l + cw * (t - scrollOff) / viewDur;
+    const y = pad.t + ch * (1 - Math.min(1, Math.max(0, probs[i])));
+    if (first) { ctx.moveTo(x, y); first = false; } else { ctx.lineTo(x, y); }
+  }
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.15;
+  for (const seg of segments) {
+    if (seg.end === null) continue;
+    const x1 = pad.l + cw * (seg.start - scrollOff) / viewDur;
+    const x2 = pad.l + cw * (seg.end - scrollOff) / viewDur;
+    if (x2 < pad.l || x1 > W - pad.r) continue;
+    ctx.fillStyle = '#2ecc71';
+    ctx.fillRect(Math.max(pad.l, x1), pad.t, Math.min(x2, W-pad.r) - Math.max(pad.l, x1), ch);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  for (let i = 0; i <= 6; i++) {
+    const t = scrollOff + viewDur / 6 * i;
+    ctx.fillText(t.toFixed(1) + 's', pad.l + cw / 6 * i, H - pad.b + 10);
+  }
+}
+
+function updateCursor(t) {
+  const p = canvas.parentElement;
+  const W = p.clientWidth, pad = {l: 40, r: 16}, cw = W - pad.l - pad.r;
+  const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
+  const viewDur = Math.min(Math.max(currentTime || 1, 1), CHART_DURATION);
+  const x = pad.l + cw * (t - scrollOff) / viewDur;
+  vadCursor.style.left = x + 'px';
+  vadCursor.style.display = (t > 0 && x >= pad.l && x <= W - pad.r) ? 'block' : 'none';
+}
+
+function addSegmentCard(seg, num) {
+  const card = document.createElement('div');
+  card.className = 'segment-card';
+  card.innerHTML = '<div class="seg-header"><span class="seg-num">Segment ' + num + '</span><span class="seg-time">' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's</span></div><div class="seg-dur">Duration: ' + (seg.end - seg.start).toFixed(2) + 's' + (seg.rms ? ' &middot; RMS: ' + seg.rms.toFixed(1) + ' dB' : '') + '</div>';
+  segmentsDiv.appendChild(card);
+  card.scrollIntoView({behavior: 'smooth', block: 'end'});
+}
+
+async function startMic() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, sampleRate: {ideal: 16000}, channelCount: {ideal: 1}}});
+  } catch (e) { showError('Mic denied: ' + e.message); return; }
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  source = audioCtx.createMediaStreamSource(stream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = e => {
+    if (!isRunning) return;
+    const input = e.inputBuffer.getChannelData(0);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(input);
+  };
+  source.connect(processor);
+  processor.connect(audioCtx.destination);
+  isRunning = true;
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  resetBtn.disabled = false;
+  adaptiveCb.disabled = true;
+  setStatus('Recording', 'recording');
+  connectWS();
+}
+
+function stopMic() {
+  isRunning = false;
+  if (processor) { processor.disconnect(); processor = null; }
+  if (source) { source.disconnect(); source = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (ws) { ws.close(); ws = null; }
+  adaptiveCb.disabled = false;
+  stopBtn.disabled = true;
+}
+
+startBtn.addEventListener('click', startMic);
+stopBtn.addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'flush'}));
+  setStatus('Flushing...');
+  stopBtn.disabled = true;
+});
+resetBtn.addEventListener('click', () => {
+  probs = []; segments = []; currentTime = 0; triggered = false; curThreshold = 0.5;
+  segmentCounter = 0;
+  adaptiveInfo.classList.remove('show');
+  segmentsDiv.innerHTML = '';
+  noSegments.style.display = 'block';
+  flushSection.classList.remove('show');
+  segCount.textContent = '0';
+  vadCursor.style.display = 'none';
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'reset'}));
+  redrawChart();
+});
+
+let rt;
+window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(redrawChart, 200); });
+</script>
+</body>
+</html>
