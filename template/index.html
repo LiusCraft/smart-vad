@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart VAD</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#16213e;border-radius:16px;padding:40px;width:480px;max-width:90vw}
+h1{font-size:22px;margin-bottom:8px}
+p{color:#888;font-size:14px;margin-bottom:24px}
+form{display:flex;flex-direction:column;gap:16px}
+input[type=file]{background:#0f3460;border:2px dashed #333;border-radius:10px;padding:40px 20px;text-align:center;cursor:pointer;color:#888;font-size:14px;transition:border-color .2s}
+input[type=file]:hover{border-color:#4a9eff}
+input[type=file]::file-selector-button{background:#4a9eff;color:#fff;border:none;border-radius:6px;padding:8px 16px;margin-right:12px;cursor:pointer;font-size:13px}
+button{background:#2ecc71;color:#fff;border:none;border-radius:8px;padding:12px;font-size:15px;cursor:pointer;transition:background .2s}
+button:hover{background:#27ae60}
+button:disabled{background:#555;cursor:not-allowed}
+.loading{display:none;text-align:center;color:#888;font-size:14px}
+.loading .spinner{display:inline-block;width:20px;height:20px;border:3px solid #333;border-top-color:#4a9eff;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Smart VAD</h1>
+<p>Upload a WAV file (16kHz mono) for voice activity detection and slicing</p>
+<form action="/analyze" method="post" enctype="multipart/form-data" id="form">
+<input type="file" name="audio" accept=".wav" required>
+<button type="submit">Analyze</button>
+</form>
+<div class="loading" id="loading"><span class="spinner"></span>Processing...</div>
+</div>
+<script>
+document.getElementById('form').addEventListener('submit', function(e) {
+  this.querySelector('button').disabled = true;
+  document.getElementById('loading').style.display = 'block';
+});
+</script>
+</div>
+</body>
+</html>

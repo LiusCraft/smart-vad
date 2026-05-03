@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart VAD Report</title>
+<script src="https://unpkg.com/wavesurfer.js@7"></script>
+<script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:24px}
+h1{font-size:24px;margin-bottom:4px}
+.subtitle{color:#888;font-size:14px;margin-bottom:20px}
+.section{background:#16213e;border-radius:12px;padding:20px;margin-bottom:20px}
+.section h2{font-size:16px;margin-bottom:12px;color:#a0a0b0}
+.waveform-container{width:100%;height:160px}
+.controls{display:flex;align-items:center;gap:12px;margin-top:12px}
+.controls button{background:#0f3460;border:none;color:#fff;width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:background .2s}
+.controls button:hover{background:#1a4a80}
+.controls .time{font-size:13px;color:#888;font-variant-numeric:tabular-nums}
+.controls select{margin-left:auto;background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer}
+.chart-wrap{width:100%;height:130px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
+.chart-wrap canvas{width:100%;height:100%;display:block}
+#vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
+.stats{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column}
+.stat .val{font-size:22px;font-weight:600}
+.stat .lbl{font-size:11px;color:#666;margin-top:2px}
+.segments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.segment-card{background:#0f3460;border-radius:8px;padding:14px;cursor:pointer;transition:background .2s}
+.segment-card:hover{background:#1a4a80}
+.segment-card h3{font-size:14px;margin-bottom:6px;display:flex;justify-content:space-between}
+.segment-card .time-range{color:#aaa;font-weight:400;font-size:13px}
+.segment-card .seg-label{color:#888;font-size:11px;margin-top:6px}
+.segment-card audio{width:100%;margin-top:8px;height:32px}
+</style>
+</head>
+<body>
+<h1>Smart VAD Report</h1>
+<p class="subtitle">{{.SampleRate}} Hz &middot; {{.Duration}}s &middot; {{.SegmentCount}} segments</p>
+
+<div class="stats">
+<div class="stat"><span class="val" style="color:#4a9eff">{{.Duration}}s</span><span class="lbl">Duration</span></div>
+<div class="stat"><span class="val" style="color:#2ecc71">{{.SegmentCount}}</span><span class="lbl">Segments</span></div>
+<div class="stat"><span class="val" style="color:#e67e22">{{.WindowMs}}ms</span><span class="lbl">Window</span></div>
+<div class="stat"><span class="val" style="color:#f1c40f">{{.SpeechRatio}}</span><span class="lbl">Speech Ratio</span></div>
+</div>
+
+<div class="section">
+<h2>Full Waveform &amp; Audio</h2>
+<div id="waveform" class="waveform-container"></div>
+<div class="controls">
+<button id="playBtn">&#9654;</button>
+<span class="time"><span id="currentTime">0:00</span> / <span id="totalTime">{{.TotalTime}}</span></span>
+<select id="speedSelect">
+<option value="0.5">0.5x</option>
+<option value="0.75">0.75x</option>
+<option value="1" selected>1x</option>
+<option value="1.25">1.25x</option>
+<option value="1.5">1.5x</option>
+<option value="2">2x</option>
+</select>
+</div>
+</div>
+
+<div class="section">
+<h2>VAD Confidence</h2>
+<div class="chart-wrap">
+<canvas id="vadCanvas"></canvas>
+<div id="vadCursor"></div>
+</div>
+</div>
+
+<div class="section">
+<h2>Sliced Segments ({{.SegmentCount}})</h2>
+<div id="segments" class="segments-grid"></div>
+</div>
+
+<script>
+const sr = {{.SampleRate}};
+const windowMs = {{.WindowMs}};
+const pcmLen = {{.PCMLength}};
+const vadProbs = {{.VADProbsJSON}};
+const segments = {{.SegmentsJSON}};
+const segmentAudios = {{.SegmentAudiosJSON}};
+const segmentFiles = {{.SegmentFilesJSON}};
+
+function pcmToWav(samples, sr) {
+  const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w(36,'data'); v.setUint32(40,n*2,true);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1,Math.min(1,samples[i]));
+    v.setInt16(44+i*2, s<0 ? s*0x8000 : s*0x7FFF, true);
+  }
+  return new Blob([buf], {type:'audio/wav'});
+}
+
+const fullAudioBlob = pcmToWav({{.WaveformJSON}}, sr);
+const fullAudioUrl = URL.createObjectURL(fullAudioBlob);
+
+const ws = WaveSurfer.create({
+  container:'#waveform', waveColor:'#4a9eff', progressColor:'#2d7de6',
+  cursorColor:'#ff6b6b', barWidth:2, barGap:1, barRadius:2, height:160,
+  backend:'WebAudio'
+});
+ws.load(fullAudioUrl);
+ws.on('ready', () => {
+  const r = ws.registerPlugin(WaveSurfer.Regions.create());
+  segments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(46,204,113,0.3)',drag:false,resize:false}));
+  document.getElementById('totalTime').textContent = formatTime(ws.getDuration());
+});
+ws.on('timeupdate', t => {
+  document.getElementById('currentTime').textContent = formatTime(t);
+  updateVADCursor(t);
+  updatePlayButton();
+});
+ws.on('finish', () => updatePlayButton());
+
+function formatTime(t) {
+  const m = Math.floor(t/60), s = Math.floor(t%60);
+  return m + ':' + String(s).padStart(2,'0');
+}
+
+const playBtn = document.getElementById('playBtn');
+playBtn.addEventListener('click', () => ws.playPause());
+function updatePlayButton() {
+  playBtn.innerHTML = ws.isPlaying() ? '&#9646;&#9646;' : '&#9654;';
+}
+
+const speedSelect = document.getElementById('speedSelect');
+speedSelect.addEventListener('change', () => {
+  const rate = parseFloat(speedSelect.value);
+  ws.setPlaybackRate(rate);
+  document.querySelectorAll('#segments audio').forEach(a => a.playbackRate = rate);
+});
+
+const vadCanvas = document.getElementById('vadCanvas');
+const vadCursor = document.getElementById('vadCursor');
+
+function drawVAD() {
+  const p = vadCanvas.parentElement;
+  vadCanvas.width = p.clientWidth*2; vadCanvas.height = p.clientHeight*2;
+  vadCanvas.style.width = p.clientWidth+'px'; vadCanvas.style.height = p.clientHeight+'px';
+  const ctx = vadCanvas.getContext('2d'); ctx.scale(2,2);
+  const W = p.clientWidth, H = p.clientHeight, pad = {t:10,b:22,l:40,r:16};
+  const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
+  const dur = pcmLen / sr;
+
+  ctx.fillStyle='#0f3460'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
+  ctx.font='10px sans-serif'; ctx.textAlign='right';
+  for(let i=0;i<=4;i++){
+    const y=pad.t+ch/4*i;
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+    ctx.fillStyle='#666'; ctx.fillText((1-i*0.25).toFixed(2),pad.l-6,y+4);
+  }
+  const ty=pad.t+ch*(1-0.5);
+  ctx.strokeStyle='rgba(255,107,107,0.4)'; ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(pad.l,ty); ctx.lineTo(W-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle='rgba(255,107,107,0.6)'; ctx.font='9px sans-serif'; ctx.textAlign='left';
+  ctx.fillText('threshold 0.5',W-pad.r-72,ty-4);
+
+  if(vadProbs.length<2)return;
+  ctx.strokeStyle='#2ecc71'; ctx.lineWidth=2; ctx.beginPath();
+  for(let i=0;i<vadProbs.length;i++){
+    const t = i * 512 / sr;
+    const x = pad.l + cw * t / dur;
+    const y = pad.t + ch * (1 - Math.min(1, Math.max(0, vadProbs[i])));
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.lineTo(pad.l+cw, pad.t+ch); ctx.lineTo(pad.l, pad.t+ch); ctx.closePath();
+  ctx.fillStyle='rgba(46,204,113,0.08)'; ctx.fill();
+
+  segments.forEach(s => {
+    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
+    ctx.fillStyle='rgba(46,204,113,0.12)';
+    ctx.fillRect(x1,pad.t,x2-x1,ch);
+  });
+
+  ctx.fillStyle='#666'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+  for(let i=0;i<=6;i++){const x=pad.l+cw/6*i; ctx.fillText((dur/6*i).toFixed(1)+'s',x,H-pad.b+10);}
+}
+let vadChartDrawn = false;
+function ensureVAD() {
+  if(!vadChartDrawn){drawVAD();vadChartDrawn=true;}
+}
+setTimeout(ensureVAD, 100);
+window.addEventListener('resize',()=>{vadChartDrawn=false;ensureVAD();});
+
+function updateVADCursor(t) {
+  const p = vadCanvas.parentElement;
+  const W = p.clientWidth, pad = {l:40,r:16};
+  const cw = W-pad.l-pad.r;
+  const dur = pcmLen / sr;
+  const x = pad.l + cw * t / dur;
+  vadCursor.style.left = x + 'px';
+  vadCursor.style.display = t > 0 && t < dur ? 'block' : 'none';
+}
+
+const grid = document.getElementById('segments');
+segments.forEach((s,i) => {
+  const card = document.createElement('div'); card.className = 'segment-card';
+  card.innerHTML = '<h3>Segment '+(i+1)+' <span class="time-range">'+s.start.toFixed(2)+'s &ndash; '+s.end.toFixed(2)+'s</span></h3>'
+    + '<p class="seg-label">Duration: '+(s.end-s.start).toFixed(2)+'s &middot; '+(segmentFiles[i]||'seg-'+String(i+1).padStart(3,'0')+'.wav')+'</p>'
+    + (segmentAudios[i] ? '<audio controls src="'+segmentAudios[i]+'"></audio>' : '');
+  card.addEventListener('click', e => {
+    if (e.target.closest('audio')) return;
+    ws.seekTo(s.start/ws.getDuration()); ws.play();
+  });
+  const aud = card.querySelector('audio');
+  if (aud) {
+    aud.playbackRate = parseFloat(speedSelect.value);
+    aud.addEventListener('ratechange', () => aud.playbackRate = parseFloat(speedSelect.value));
+  }
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>
