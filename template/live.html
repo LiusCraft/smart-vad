@@ -135,13 +135,17 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws?adaptive=' + adaptiveCb.checked);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => setStatus('Connected');
-  ws.onmessage = e => { if (typeof e.data === 'string') handleMsg(JSON.parse(e.data)); };
-  ws.onclose = () => { if (isRunning) { setStatus('Disconnected'); stopMic(); } };
-  ws.onerror = () => showError('WebSocket error');
+  ws.onopen = () => { console.log('WS connected'); setStatus('Connected'); };
+  ws.onmessage = e => {
+    if (typeof e.data === 'string') { handleMsg(JSON.parse(e.data)); }
+    else { console.log('WS recv binary:', e.data.byteLength, 'bytes'); }
+  };
+  ws.onclose = (ev) => { console.log('WS closed:', ev.code, ev.reason); if (isRunning) { setStatus('Disconnected'); stopMic(); } };
+  ws.onerror = () => { console.error('WS error'); showError('WebSocket error'); };
 }
 
 function handleMsg(msg) {
+  console.log('WS recv:', msg.type, msg);
   switch (msg.type) {
     case 'probs':
       if (msg.probs && msg.probs.length > 0) {
@@ -278,11 +282,23 @@ function addSegmentCard(seg, num) {
   card.scrollIntoView({behavior: 'smooth', block: 'end'});
 }
 
+function downsample(buffer, srcRate, dstRate) {
+  if (srcRate === dstRate) return buffer;
+  const ratio = srcRate / dstRate;
+  const outLen = Math.floor(buffer.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    out[i] = buffer[Math.floor(i * ratio)];
+  }
+  return out;
+}
+
 async function startMic() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, sampleRate: {ideal: 16000}, channelCount: {ideal: 1}}});
   } catch (e) { showError('Mic denied: ' + e.message); return; }
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  console.log('AudioContext sampleRate:', audioCtx.sampleRate);
   source = audioCtx.createMediaStreamSource(stream);
   processor = audioCtx.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = e => {
@@ -290,7 +306,8 @@ async function startMic() {
     const input = e.inputBuffer.getChannelData(0);
     const output = e.outputBuffer.getChannelData(0);
     output.set(input);
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(input);
+    const sendBuf = downsample(input, audioCtx.sampleRate, 16000);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(sendBuf);
   };
   source.connect(processor);
   processor.connect(audioCtx.destination);
