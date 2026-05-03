@@ -130,8 +130,8 @@ func TestComputeBaseline(t *testing.T) {
 	}
 
 	baseline := a.computeBaseline()
-	if baseline < -25 {
-		t.Errorf("baseline = %.1f, want near -20 (P85 should capture the loud frames)", baseline)
+	if baseline != -20 {
+		t.Errorf("baseline = %.1f, want -20 (P85 of 100 frames: 80 at -50, 20 at -20)", baseline)
 	}
 }
 
