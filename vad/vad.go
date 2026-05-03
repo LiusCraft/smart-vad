@@ -58,6 +58,11 @@ type Detector struct {
 	inner *speech.Detector
 	cfg   Config
 
+	// Runtime-adjustable params (initialized from cfg in NewDetector)
+	threshold    float32
+	minSilenceMs int
+	minSpeechMs  int
+
 	triggered  bool
 	tempEnd    int
 	currSample int
@@ -87,7 +92,13 @@ func NewDetector(cfg Config) (*Detector, error) {
 		return nil, fmt.Errorf("failed to create speech detector: %w", err)
 	}
 
-	return &Detector{inner: inner, cfg: cfg}, nil
+	return &Detector{
+		inner:        inner,
+		cfg:          cfg,
+		threshold:    cfg.Threshold,
+		minSilenceMs: cfg.MinSilenceDurationMs,
+		minSpeechMs:  cfg.MinSpeechDurationMs,
+	}, nil
 }
 
 func (d *Detector) Reset() {
@@ -105,7 +116,7 @@ func (d *Detector) Process(chunk []float32) error {
 		return fmt.Errorf("chunk too short: need at least %d samples", ws)
 	}
 
-	minSilenceSamples := d.cfg.MinSilenceDurationMs * d.cfg.SampleRate / 1000
+	minSilenceSamples := d.minSilenceMs * d.cfg.SampleRate / 1000
 	speechPadSamples := d.cfg.SpeechPadMs * d.cfg.SampleRate / 1000
 
 	for i := 0; i <= len(chunk)-ws; i += ws {
@@ -117,11 +128,11 @@ func (d *Detector) Process(chunk []float32) error {
 		d.probs = append(d.probs, speechProb)
 		d.currSample += ws
 
-		if speechProb >= d.cfg.Threshold && d.tempEnd != 0 {
+		if speechProb >= d.threshold && d.tempEnd != 0 {
 			d.tempEnd = 0
 		}
 
-		if speechProb >= d.cfg.Threshold && !d.triggered {
+		if speechProb >= d.threshold && !d.triggered {
 			d.triggered = true
 			start := float64(d.currSample-ws-speechPadSamples) / float64(d.cfg.SampleRate)
 			if start < 0 {
@@ -130,7 +141,7 @@ func (d *Detector) Process(chunk []float32) error {
 			d.segments = append(d.segments, Segment{Start: start})
 		}
 
-		if speechProb < (d.cfg.Threshold-0.15) && d.triggered {
+		if speechProb < (d.threshold-0.15) && d.triggered {
 			if d.tempEnd == 0 {
 				d.tempEnd = d.currSample
 			}
@@ -156,8 +167,8 @@ func (d *Detector) Flush() Result {
 	}
 
 	segments := d.segments
-	if d.cfg.MinSpeechDurationMs > 0 {
-		minDur := float64(d.cfg.MinSpeechDurationMs) / 1000
+	if d.minSpeechMs > 0 {
+		minDur := float64(d.minSpeechMs) / 1000
 		filtered := segments[:0]
 		for _, s := range segments {
 			if s.End-s.Start >= minDur {
@@ -188,4 +199,22 @@ func (d *Detector) Detect(pcm []float32) (Result, error) {
 
 func (d *Detector) Destroy() error {
 	return d.inner.Destroy()
+}
+
+func (d *Detector) SetThreshold(t float32) {
+	if t > 0 && t < 1 {
+		d.threshold = t
+	}
+}
+
+func (d *Detector) SetMinSilenceDurationMs(ms int) {
+	if ms >= 0 {
+		d.minSilenceMs = ms
+	}
+}
+
+func (d *Detector) SetMinSpeechDurationMs(ms int) {
+	if ms >= 0 {
+		d.minSpeechMs = ms
+	}
 }
