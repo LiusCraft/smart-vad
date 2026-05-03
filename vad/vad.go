@@ -58,7 +58,6 @@ type Detector struct {
 	inner *speech.Detector
 	cfg   Config
 
-	// Runtime-adjustable params (initialized from cfg in NewDetector)
 	threshold    float32
 	minSilenceMs int
 	minSpeechMs  int
@@ -201,18 +200,24 @@ func (d *Detector) Destroy() error {
 	return d.inner.Destroy()
 }
 
+// SetThreshold updates the speech probability threshold at runtime.
+// Invalid values (<= 0 or >= 1) are silently ignored.
 func (d *Detector) SetThreshold(t float32) {
 	if t > 0 && t < 1 {
 		d.threshold = t
 	}
 }
 
+// SetMinSilenceDurationMs updates the minimum silence duration at runtime.
+// Negative values are silently ignored.
 func (d *Detector) SetMinSilenceDurationMs(ms int) {
 	if ms >= 0 {
 		d.minSilenceMs = ms
 	}
 }
 
+// SetMinSpeechDurationMs updates the minimum speech duration at runtime.
+// Negative values are silently ignored.
 func (d *Detector) SetMinSpeechDurationMs(ms int) {
 	if ms >= 0 {
 		d.minSpeechMs = ms
