@@ -223,3 +223,9 @@ func (d *Detector) SetMinSpeechDurationMs(ms int) {
 		d.minSpeechMs = ms
 	}
 }
+
+func (d *Detector) GetProbs() []float32    { return d.probs }
+func (d *Detector) GetSegments() []Segment { return d.segments }
+func (d *Detector) IsTriggered() bool      { return d.triggered }
+func (d *Detector) CurrentSample() int     { return d.currSample }
+func (d *Detector) GetThreshold() float32  { return d.threshold }

@@ -238,6 +238,7 @@ func (a *AdaptiveDetector) Process(chunk []float32) error {
 	}
 
 	baseline := a.computeBaseline()
+	a.baselineDB = baseline
 	threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
 	a.inner.SetThreshold(threshold)
 	a.inner.SetMinSpeechDurationMs(minSpeechMs)
@@ -261,3 +262,8 @@ func (a *AdaptiveDetector) EnergyOffsetDB() float64 {
 func (a *AdaptiveDetector) Destroy() error {
 	return a.inner.Destroy()
 }
+
+func (a *AdaptiveDetector) Inner() *Detector       { return a.inner }
+func (a *AdaptiveDetector) GetProbs() []float32    { return a.inner.GetProbs() }
+func (a *AdaptiveDetector) GetSegments() []Segment { return a.inner.GetSegments() }
+func (a *AdaptiveDetector) IsTriggered() bool      { return a.inner.IsTriggered() }
