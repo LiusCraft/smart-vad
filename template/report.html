@@ -256,6 +256,34 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   s.parentElement.insertBefore(g, s.nextSibling.nextSibling);
 });
+</script>
+{{if .SegmentCount}}<div class="filtered-output" style="margin-top:20px;padding:16px;background:#0f3460;border-radius:8px;border-left:3px solid #2ecc71">
+  <div style="font-size:14px;color:#2ecc71;margin-bottom:8px;font-weight:600">&#9654; Filtered Output ({{.SegmentCount}} segments passed)</div>
+  <audio controls style="width:100%"></audio>
+</div>
+<script>
+(async function() {
+  const raw = [];
+  for (const url of segmentAudios) {
+    if (!url) continue;
+    const r = await fetch(url);
+    const buf = await r.arrayBuffer();
+    const v = new DataView(buf);
+    const n = v.getUint32(40, true) / 2;
+    for (let i = 0; i < n; i++) raw.push(v.getInt16(44 + i*2, true));
+  }
+  if (raw.length === 0) return;
+  const sr = {{.SampleRate}}, n = raw.length;
+  const out = new ArrayBuffer(44 + n * 2);
+  const w = new DataView(out);
+  const s = (o, str) => { for (let i = 0; i < str.length; i++) w.setUint8(o + i, str.charCodeAt(i)); };
+  s(0,'RIFF'); w.setUint32(4,36+n*2,true); s(8,'WAVE'); s(12,'fmt ');
+  w.setUint32(16,16,true); w.setUint16(20,1,true); w.setUint16(22,1,true);
+  w.setUint32(24,sr,true); w.setUint32(28,sr*2,true); w.setUint16(32,2,true); w.setUint16(34,16,true);
+  s(36,'data'); w.setUint32(40,n*2,true);
+  for (let i = 0; i < n; i++) w.setInt16(44+i*2, raw[i], true);
+  document.querySelector('.filtered-output audio').src = URL.createObjectURL(new Blob([out], {type:'audio/wav'}));
+})();
 </script>{{end}}
 </body>
 </html>
