@@ -17,18 +17,13 @@ import (
 	"github.com/liushunshun/smart-vad/vad"
 )
 
-var (
-	modelPath   string
-	useAdaptive bool
-)
+var modelPath string
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	model := flag.String("model", "silero_vad.onnx", "path to silero_vad.onnx")
-	adaptive := flag.Bool("adaptive", false, "enable adaptive VAD (dynamic baseline threshold)")
 	flag.Parse()
 	modelPath = *model
-	useAdaptive = *adaptive
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
 		log.Fatalf("model not found: %s", modelPath)
@@ -109,7 +104,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	var result vad.Result
 	var filteredSegments []vad.Segment
 
-	if useAdaptive {
+	if r.FormValue("adaptive") == "true" {
 		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
 				ModelPath:            modelPath,

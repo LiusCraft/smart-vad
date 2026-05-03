@@ -28,6 +28,10 @@ button:disabled{background:#555;cursor:not-allowed}
 <p>Upload a WAV file (16kHz mono) for voice activity detection and slicing</p>
 <form action="/analyze" method="post" enctype="multipart/form-data" id="form">
 <input type="file" name="audio" accept=".wav" required>
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#888;font-size:13px">
+  <input type="checkbox" name="adaptive" value="true" style="width:16px;height:16px;accent-color:#4a9eff;cursor:pointer">
+  Adaptive VAD (dynamic noise floor, energy filter)
+</label>
 <button type="submit">Analyze</button>
 </form>
 <div class="loading" id="loading"><span class="spinner"></span>Processing...</div>
