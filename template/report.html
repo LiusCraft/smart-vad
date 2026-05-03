@@ -75,7 +75,7 @@ h1{font-size:24px;margin-bottom:4px}
 </div>
 
 <div class="section">
-<h2>Sliced Segments ({{.SegmentCount}})</h2>
+<h2>Sliced Segments ({{.SegmentCount}}{{if .FilteredCount}}, {{.FilteredCount}} filtered by energy{{end}})</h2>
 <div id="segments" class="segments-grid"></div>
 </div>
 
@@ -85,6 +85,7 @@ const windowMs = {{.WindowMs}};
 const pcmLen = {{.PCMLength}};
 const vadProbs = {{.VADProbsJSON}};
 const segments = {{.SegmentsJSON}};
+const filteredSegments = {{.FilteredSegmentsJSON}};
 const segmentAudios = {{.SegmentAudiosJSON}};
 const segmentFiles = {{.SegmentFilesJSON}};
 
@@ -114,6 +115,7 @@ ws.load(fullAudioUrl);
 ws.on('ready', () => {
   const r = ws.registerPlugin(WaveSurfer.Regions.create());
   segments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(46,204,113,0.3)',drag:false,resize:false}));
+  filteredSegments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(255,80,80,0.35)',drag:false,resize:false}));
   document.getElementById('totalTime').textContent = formatTime(ws.getDuration());
 });
 ws.on('timeupdate', t => {
@@ -182,6 +184,11 @@ function drawVAD() {
   segments.forEach(s => {
     const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
     ctx.fillStyle='rgba(46,204,113,0.12)';
+    ctx.fillRect(x1,pad.t,x2-x1,ch);
+  });
+  filteredSegments.forEach(s => {
+    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
+    ctx.fillStyle='rgba(255,80,80,0.18)';
     ctx.fillRect(x1,pad.t,x2-x1,ch);
   });
 

@@ -107,6 +107,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result vad.Result
+	var filteredSegments []vad.Segment
 
 	if useAdaptive {
 		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
@@ -130,6 +131,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("detect: %v", err), 500)
 			return
 		}
+		filteredSegments = adaptDetector.FilteredSegments()
 	} else {
 		detector, err := vad.NewDetector(vad.Config{
 			ModelPath:            modelPath,
@@ -176,16 +178,22 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		htmlSegments[i] = html.Segment{Start: s.Start, End: s.End}
 	}
 
+	htmlFiltered := make([]html.Segment, len(filteredSegments))
+	for i, s := range filteredSegments {
+		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End}
+	}
+
 	var reportBuf bytes.Buffer
 	if err := html.Render(html.ReportData{
-		SampleRate:   srInt,
-		Duration:     duration,
-		PCM:          pcm,
-		VADProbs:     result.Probs,
-		Segments:     htmlSegments,
-		SegmentFiles: segFiles,
-		SegmentPCM:   segPCMs,
-		BackURL:      "/",
+		SampleRate:       srInt,
+		Duration:         duration,
+		PCM:              pcm,
+		VADProbs:         result.Probs,
+		Segments:         htmlSegments,
+		FilteredSegments: htmlFiltered,
+		SegmentFiles:     segFiles,
+		SegmentPCM:       segPCMs,
+		BackURL:          "/",
 	}, &reportBuf); err != nil {
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return

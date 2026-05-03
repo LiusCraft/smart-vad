@@ -91,6 +91,9 @@ type AdaptiveDetector struct {
 	capacity   int
 	frameSize  int
 	sampleRate int
+
+	rawSegments  []Segment // pre-filter segments, for inspection
+	keptSegments []Segment // post-filter segments retained
 }
 
 func NewAdaptiveDetector(cfg AdaptiveConfig) (*AdaptiveDetector, error) {
@@ -191,10 +194,31 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 		return Result{}, err
 	}
 
+	a.rawSegments = make([]Segment, len(result.Segments))
+	copy(a.rawSegments, result.Segments)
+
 	minDB := baseline + a.cfg.EnergyOffsetDB
 	result.Segments = FilterSegments(pcm, result.Segments, a.sampleRate, minDB)
 
+	a.keptSegments = make([]Segment, len(result.Segments))
+	copy(a.keptSegments, result.Segments)
+
 	return result, nil
+}
+
+// FilteredSegments returns segments that were discarded by the RMS energy post-filter.
+func (a *AdaptiveDetector) FilteredSegments() []Segment {
+	kept := make(map[Segment]bool, len(a.keptSegments))
+	for _, s := range a.keptSegments {
+		kept[s] = true
+	}
+	var filtered []Segment
+	for _, s := range a.rawSegments {
+		if !kept[s] {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }
 
 func (a *AdaptiveDetector) Reset() {

@@ -56,6 +56,7 @@ func main() {
 		*input, sampleRate, len(pcm), float64(len(pcm))/float64(sampleRate))
 
 	var result vad.Result
+	var filteredSegments []vad.Segment
 
 	if *adaptive {
 		log.Print("Adaptive VAD enabled")
@@ -78,6 +79,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("detect: %v", err)
 		}
+		filteredSegments = adaptDetector.FilteredSegments()
 	} else {
 		detector, err := vad.NewDetector(vad.Config{
 			ModelPath:            *model,
@@ -144,14 +146,20 @@ func main() {
 		htmlSegments[i] = html.Segment{Start: s.Start, End: s.End}
 	}
 
+	htmlFiltered := make([]html.Segment, len(filteredSegments))
+	for i, s := range filteredSegments {
+		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End}
+	}
+
 	if err := html.Render(html.ReportData{
-		SampleRate:   sampleRate,
-		Duration:     duration,
-		PCM:          pcm,
-		VADProbs:     result.Probs,
-		Segments:     htmlSegments,
-		SegmentFiles: segFiles,
-		SegmentPCM:   segPCMs,
+		SampleRate:       sampleRate,
+		Duration:         duration,
+		PCM:              pcm,
+		VADProbs:         result.Probs,
+		Segments:         htmlSegments,
+		FilteredSegments: htmlFiltered,
+		SegmentFiles:     segFiles,
+		SegmentPCM:       segPCMs,
 	}, rf); err != nil {
 		log.Fatalf("render report: %v", err)
 	}
