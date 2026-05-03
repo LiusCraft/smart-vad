@@ -116,7 +116,7 @@ func TestComputeBaseline(t *testing.T) {
 	a := &AdaptiveDetector{
 		inner: &Detector{minSilenceMs: 500},
 		cfg: AdaptiveConfig{
-			Percentile: 0.85,
+			NoiseFloorFrac: 0.1,
 		},
 		frameDB:  make([]float64, 0, 100),
 		capacity: 100,
@@ -130,8 +130,8 @@ func TestComputeBaseline(t *testing.T) {
 	}
 
 	baseline := a.computeBaseline()
-	if baseline != -20 {
-		t.Errorf("baseline = %.1f, want -20 (P85 of 100 frames: 80 at -50, 20 at -20)", baseline)
+	if baseline != -50 {
+		t.Errorf("baseline = %.1f, want -50 (bottom 10%% avg = 10 frames at -50)", baseline)
 	}
 }
 
@@ -144,8 +144,8 @@ func TestAdaptiveConfigValidation(t *testing.T) {
 	if cfg.WindowDuration != 30 {
 		t.Errorf("WindowDuration = %.0f, want 30", cfg.WindowDuration)
 	}
-	if cfg.Percentile != 0.85 {
-		t.Errorf("Percentile = %.2f, want 0.85", cfg.Percentile)
+	if cfg.NoiseFloorFrac != 0.1 {
+		t.Errorf("NoiseFloorFrac = %.2f, want 0.1", cfg.NoiseFloorFrac)
 	}
 	if cfg.EnergyOffsetDB != 6 {
 		t.Errorf("EnergyOffsetDB = %.0f, want 6", cfg.EnergyOffsetDB)
@@ -168,14 +168,14 @@ func TestAdaptiveConfigValidationCustom(t *testing.T) {
 	// Custom values should NOT be overwritten by setDefaults
 	cfg := AdaptiveConfig{
 		WindowDuration: 60,
-		Percentile:     0.9,
+		NoiseFloorFrac: 0.2,
 	}
 	cfg.setDefaults()
 	if cfg.WindowDuration != 60 {
 		t.Errorf("WindowDuration should stay 60, got %.0f", cfg.WindowDuration)
 	}
-	if cfg.Percentile != 0.9 {
-		t.Errorf("Percentile should stay 0.9, got %.2f", cfg.Percentile)
+	if cfg.NoiseFloorFrac != 0.2 {
+		t.Errorf("NoiseFloorFrac should stay 0.2, got %.2f", cfg.NoiseFloorFrac)
 	}
 }
 

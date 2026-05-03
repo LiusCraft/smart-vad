@@ -50,10 +50,9 @@ func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 type AdaptiveConfig struct {
 	DetectorConfig Config
 
-	WindowDuration float64
-	Percentile     float64
-	EnergyOffsetDB float64
-
+	WindowDuration    float64
+	NoiseFloorFrac    float64 // fraction of quietest frames to average for noise baseline, default 0.1
+	EnergyOffsetDB    float64
 	AdaptThresholdMin float32
 	AdaptThresholdMax float32
 	AdaptMinSpeechMin int
@@ -64,8 +63,8 @@ func (c *AdaptiveConfig) setDefaults() {
 	if c.WindowDuration == 0 {
 		c.WindowDuration = 30
 	}
-	if c.Percentile == 0 {
-		c.Percentile = 0.85
+	if c.NoiseFloorFrac == 0 {
+		c.NoiseFloorFrac = 0.1
 	}
 	if c.EnergyOffsetDB == 0 {
 		c.EnergyOffsetDB = 6
@@ -139,8 +138,18 @@ func (a *AdaptiveDetector) computeBaseline() float64 {
 	sorted := make([]float64, n)
 	copy(sorted, a.frameDB)
 	sort.Float64s(sorted)
-	idx := int(float64(n-1) * a.cfg.Percentile)
-	return sorted[idx]
+
+	// Noise floor = average of the quietest NoiseFloorFrac fraction of frames.
+	// This captures background noise level, not speech level.
+	count := int(math.Ceil(float64(n) * a.cfg.NoiseFloorFrac))
+	if count < 1 {
+		count = 1
+	}
+	var sum float64
+	for i := 0; i < count; i++ {
+		sum += sorted[i]
+	}
+	return sum / float64(count)
 }
 
 func (a *AdaptiveDetector) mapParams(baselineDB float64) (threshold float32, minSpeechMs int, minSilenceMs int) {
