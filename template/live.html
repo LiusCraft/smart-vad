@@ -69,6 +69,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 Time: <span id="timeDisplay">0:00</span> &middot;
 Segments: <span id="segCount" style="color:#2ecc71">0</span>
 </div>
+<label class="adaptive-label" style="margin-left:auto">
+  Sample Rate:
+  <select id="sampleRateSelect" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">
+    <option value="16000" selected>16000 Hz</option>
+    <option value="44100">44100 Hz</option>
+    <option value="48000">48000 Hz</option>
+  </select>
+</label>
 <label class="adaptive-label">
 <input type="checkbox" id="adaptiveCb" checked>
 Adaptive VAD
@@ -121,6 +129,7 @@ const noSegments = document.getElementById('noSegments');
 const flushSection = document.getElementById('flushSection');
 const mergedAudio = document.getElementById('mergedAudio');
 const errorMsg = document.getElementById('errorMsg');
+const sampleRateSelect = document.getElementById('sampleRateSelect');
 const ctx = canvas.getContext('2d');
 
 let ws, stream, audioCtx, processor, source, isRunning = false;
@@ -294,11 +303,19 @@ function downsample(buffer, srcRate, dstRate) {
 }
 
 async function startMic() {
+  const targetRate = parseInt(sampleRateSelect.value);
   try {
-    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, sampleRate: {ideal: 16000}, channelCount: {ideal: 1}}});
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, sampleRate: {ideal: targetRate}, channelCount: {ideal: 1}}});
   } catch (e) { showError('Mic denied: ' + e.message); return; }
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: targetRate});
+  } catch (e) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
   console.log('AudioContext sampleRate:', audioCtx.sampleRate);
+  if (audioCtx.sampleRate !== targetRate) {
+    console.log('Requested', targetRate, 'but got', audioCtx.sampleRate);
+  }
   source = audioCtx.createMediaStreamSource(stream);
   processor = audioCtx.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = e => {
@@ -316,6 +333,7 @@ async function startMic() {
   stopBtn.disabled = false;
   resetBtn.disabled = false;
   adaptiveCb.disabled = true;
+  sampleRateSelect.disabled = true;
   setStatus('Recording', 'recording');
   connectWS();
 }
@@ -328,6 +346,7 @@ function stopMic() {
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   if (ws) { ws.close(); ws = null; }
   adaptiveCb.disabled = false;
+  sampleRateSelect.disabled = false;
   stopBtn.disabled = true;
 }
 
