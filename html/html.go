@@ -20,6 +20,7 @@ type ReportData struct {
 	Segments     []Segment
 	SegmentFiles []string
 	SegmentPCM   [][]float32
+	BackURL      string
 }
 
 type Segment struct {
@@ -35,6 +36,7 @@ type reportTmplData struct {
 	WindowMs          string
 	SpeechRatio       string
 	TotalTime         string
+	BackURL           string
 	WaveformJSON      template.JS
 	VADProbsJSON      template.JS
 	SegmentsJSON      template.JS
@@ -63,6 +65,7 @@ func Render(data ReportData, w io.Writer) error {
 		WindowMs:          fmt.Sprintf("%.0f", windowMs),
 		SpeechRatio:       speechRatio,
 		TotalTime:         fmt.Sprintf("%d:%02d", int(dur)/60, int(dur)%60),
+		BackURL:           data.BackURL,
 		WaveformJSON:      template.JS(encodeFloat32Array(data.PCM)),
 		VADProbsJSON:      template.JS(encodeFloat32Array(data.VADProbs)),
 		SegmentsJSON:      template.JS(encodeSegments(data.Segments)),

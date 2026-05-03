@@ -19,6 +19,8 @@ h1{font-size:24px;margin-bottom:4px}
 .controls button:hover{background:#1a4a80}
 .controls .time{font-size:13px;color:#888;font-variant-numeric:tabular-nums}
 .controls select{margin-left:auto;background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer}
+.back-btn{display:inline-block;margin-bottom:16px;background:#0f3460;color:#4a9eff;border:1px solid #4a9eff;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;text-decoration:none;transition:background .2s}
+.back-btn:hover{background:#1a4a80}
 .chart-wrap{width:100%;height:130px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
 .chart-wrap canvas{width:100%;height:100%;display:block}
 #vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
@@ -38,6 +40,7 @@ h1{font-size:24px;margin-bottom:4px}
 <body>
 <h1>Smart VAD Report</h1>
 <p class="subtitle">{{.SampleRate}} Hz &middot; {{.Duration}}s &middot; {{.SegmentCount}} segments</p>
+{{if .BackURL}}<a href="{{.BackURL}}" class="back-btn">&larr; New Analysis</a>{{end}}
 
 <div class="stats">
 <div class="stat"><span class="val" style="color:#4a9eff">{{.Duration}}s</span><span class="lbl">Duration</span></div>

@@ -57,6 +57,12 @@ type Result struct {
 type Detector struct {
 	inner *speech.Detector
 	cfg   Config
+
+	triggered  bool
+	tempEnd    int
+	currSample int
+	segments   []Segment
+	probs      []float32
 }
 
 func NewDetector(cfg Config) (*Detector, error) {
@@ -84,69 +90,72 @@ func NewDetector(cfg Config) (*Detector, error) {
 	return &Detector{inner: inner, cfg: cfg}, nil
 }
 
-func (d *Detector) Detect(pcm []float32) (Result, error) {
-	ws := d.cfg.windowSize()
-	if len(pcm) < ws {
-		return Result{}, fmt.Errorf("audio too short: need at least %d samples", ws)
-	}
+func (d *Detector) Reset() {
+	d.triggered = false
+	d.tempEnd = 0
+	d.currSample = 0
+	d.segments = nil
+	d.probs = nil
+	d.inner.Reset()
+}
 
-	if err := d.inner.Reset(); err != nil {
-		return Result{}, fmt.Errorf("reset failed: %w", err)
+func (d *Detector) Process(chunk []float32) error {
+	ws := d.cfg.windowSize()
+	if len(chunk) < ws {
+		return fmt.Errorf("chunk too short: need at least %d samples", ws)
 	}
 
 	minSilenceSamples := d.cfg.MinSilenceDurationMs * d.cfg.SampleRate / 1000
 	speechPadSamples := d.cfg.SpeechPadMs * d.cfg.SampleRate / 1000
 
-	var segments []Segment
-	var probs []float32
-
-	currSample := 0
-	triggered := false
-	tempEnd := 0
-
-	for i := 0; i <= len(pcm)-ws; i += ws {
-		speechProb, err := d.inner.Infer(pcm[i : i+ws])
+	for i := 0; i <= len(chunk)-ws; i += ws {
+		speechProb, err := d.inner.Infer(chunk[i : i+ws])
 		if err != nil {
-			return Result{}, fmt.Errorf("infer failed at sample %d: %w", i, err)
+			return fmt.Errorf("infer failed: %w", err)
 		}
 
-		probs = append(probs, speechProb)
-		currSample += ws
+		d.probs = append(d.probs, speechProb)
+		d.currSample += ws
 
-		if speechProb >= d.cfg.Threshold && tempEnd != 0 {
-			tempEnd = 0
+		if speechProb >= d.cfg.Threshold && d.tempEnd != 0 {
+			d.tempEnd = 0
 		}
 
-		if speechProb >= d.cfg.Threshold && !triggered {
-			triggered = true
-			start := float64(currSample-ws-speechPadSamples) / float64(d.cfg.SampleRate)
+		if speechProb >= d.cfg.Threshold && !d.triggered {
+			d.triggered = true
+			start := float64(d.currSample-ws-speechPadSamples) / float64(d.cfg.SampleRate)
 			if start < 0 {
 				start = 0
 			}
-			segments = append(segments, Segment{Start: start})
+			d.segments = append(d.segments, Segment{Start: start})
 		}
 
-		if speechProb < (d.cfg.Threshold-0.15) && triggered {
-			if tempEnd == 0 {
-				tempEnd = currSample
+		if speechProb < (d.cfg.Threshold-0.15) && d.triggered {
+			if d.tempEnd == 0 {
+				d.tempEnd = d.currSample
 			}
-			if currSample-tempEnd < minSilenceSamples {
+			if d.currSample-d.tempEnd < minSilenceSamples {
 				continue
 			}
-			end := float64(tempEnd+speechPadSamples) / float64(d.cfg.SampleRate)
-			tempEnd = 0
-			triggered = false
-			if len(segments) > 0 {
-				segments[len(segments)-1].End = end
+			end := float64(d.tempEnd+speechPadSamples) / float64(d.cfg.SampleRate)
+			d.tempEnd = 0
+			d.triggered = false
+			if len(d.segments) > 0 {
+				d.segments[len(d.segments)-1].End = end
 			}
 		}
 	}
 
-	if triggered && len(segments) > 0 {
-		end := float64(len(pcm)) / float64(d.cfg.SampleRate)
-		segments[len(segments)-1].End = end
+	return nil
+}
+
+func (d *Detector) Flush() Result {
+	if d.triggered && len(d.segments) > 0 {
+		end := float64(d.currSample) / float64(d.cfg.SampleRate)
+		d.segments[len(d.segments)-1].End = end
 	}
 
+	segments := d.segments
 	if d.cfg.MinSpeechDurationMs > 0 {
 		minDur := float64(d.cfg.MinSpeechDurationMs) / 1000
 		filtered := segments[:0]
@@ -158,7 +167,23 @@ func (d *Detector) Detect(pcm []float32) (Result, error) {
 		segments = filtered
 	}
 
-	return Result{Segments: segments, Probs: probs}, nil
+	probs := d.probs
+	return Result{Segments: segments, Probs: probs}
+}
+
+func (d *Detector) Detect(pcm []float32) (Result, error) {
+	ws := d.cfg.windowSize()
+	if len(pcm) < ws {
+		return Result{}, fmt.Errorf("audio too short: need at least %d samples", ws)
+	}
+
+	d.Reset()
+
+	if err := d.Process(pcm); err != nil {
+		return Result{}, err
+	}
+
+	return d.Flush(), nil
 }
 
 func (d *Detector) Destroy() error {

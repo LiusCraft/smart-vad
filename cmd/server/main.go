@@ -154,6 +154,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		Segments:     htmlSegments,
 		SegmentFiles: segFiles,
 		SegmentPCM:   segPCMs,
+		BackURL:      "/",
 	}, &reportBuf); err != nil {
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return
