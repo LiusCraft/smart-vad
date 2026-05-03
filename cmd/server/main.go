@@ -108,9 +108,11 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	var result vad.Result
 	var filteredSegments []vad.Segment
+	var adaptDetector *vad.AdaptiveDetector
 
 	if r.FormValue("adaptive") == "true" {
-		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
+		var err error
+		adaptDetector, err = vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
 				ModelPath:            modelPath,
 				SampleRate:           16000,
@@ -186,12 +188,26 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	duration := float64(len(pcm)) / float64(sr)
 	htmlSegments := make([]html.Segment, len(result.Segments))
 	for i, s := range result.Segments {
-		htmlSegments[i] = html.Segment{Start: s.Start, End: s.End}
+		rms := 0.0
+		if i < len(segPCMs) {
+			rms = vad.RMS(segPCMs[i])
+		}
+		htmlSegments[i] = html.Segment{Start: s.Start, End: s.End, RMS: rms}
 	}
 
 	htmlFiltered := make([]html.Segment, len(filteredSegments))
 	for i, s := range filteredSegments {
-		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End}
+		rms := 0.0
+		if i < len(filteredPCMs) {
+			rms = vad.RMS(filteredPCMs[i])
+		}
+		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End, RMS: rms}
+	}
+
+	var baselineDB, energyOffsetDB float64
+	if adaptDetector != nil {
+		baselineDB = adaptDetector.BaselineDB()
+		energyOffsetDB = adaptDetector.EnergyOffsetDB()
 	}
 
 	var reportBuf bytes.Buffer
@@ -207,6 +223,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		FilteredSegmentPCM: filteredPCMs,
 		BackURL:            "/",
 		HasResults:         true,
+		AdaptiveVAD:        r.FormValue("adaptive") == "true",
+		BaselineDB:         baselineDB,
+		EnergyOffsetDB:     energyOffsetDB,
 	}, &reportBuf); err != nil {
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return

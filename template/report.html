@@ -37,6 +37,9 @@ h1{font-size:24px;margin-bottom:4px}
 .chart-wrap{width:100%;height:130px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
 .chart-wrap canvas{width:100%;height:100%;display:block}
 #vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
+#vadTooltip{position:absolute;background:rgba(15,52,96,0.95);border:1px solid #4a9eff;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.6;pointer-events:none;display:none;z-index:10;white-space:nowrap;backdrop-filter:blur(4px);color:#ccc}
+#vadTooltip .tt-title{color:#4a9eff;font-weight:600;font-size:13px;margin-bottom:4px}
+#vadTooltip .tt-label{color:#888}
 .stats{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
 .stat{display:flex;flex-direction:column}
 .stat .val{font-size:22px;font-weight:600}
@@ -99,6 +102,7 @@ h1{font-size:24px;margin-bottom:4px}
 <div class="chart-wrap">
 <canvas id="vadCanvas"></canvas>
 <div id="vadCursor"></div>
+<div id="vadTooltip"></div>
 </div>
 </div>
 
@@ -110,6 +114,9 @@ h1{font-size:24px;margin-bottom:4px}
 <script>
 const sr = {{.SampleRate}};
 const windowMs = {{.WindowMs}};
+const adaptiveVAD = {{.AdaptiveVAD}};
+const baselineDB = {{.BaselineDB}};
+const energyOffsetDB = {{.EnergyOffsetDB}};
 const pcmLen = {{.PCMLength}};
 const vadProbs = {{.VADProbsJSON}};
 const segments = {{.SegmentsJSON}};
@@ -175,6 +182,48 @@ speedSelect.addEventListener('change', () => {
 const vadCanvas = document.getElementById('vadCanvas');
 const vadCursor = document.getElementById('vadCursor');
 
+function segmentConfidenceStats(seg) {
+  var frameSec = windowMs / 1000;
+  var startFrame = Math.floor(seg.start / frameSec);
+  var endFrame = Math.min(vadProbs.length - 1, Math.ceil(seg.end / frameSec));
+  var slice = vadProbs.slice(startFrame, endFrame + 1);
+  if (slice.length === 0) return null;
+  var sum = slice.reduce(function(a, b) { return a + b; }, 0);
+  return {
+    avg: sum / slice.length,
+    min: Math.min.apply(null, slice),
+    max: Math.max.apply(null, slice)
+  };
+}
+
+function showSegmentTooltip(seg, isFiltered, x, y) {
+  var el = document.getElementById('vadTooltip');
+  var stats = segmentConfidenceStats(seg);
+  var idx = isFiltered ? filteredSegments.indexOf(seg) : segments.indexOf(seg);
+  var label = isFiltered ? 'Filtered ' + (idx + 1) : 'Segment ' + (idx + 1);
+  var html = '<div class="tt-title">' + label + '</div>';
+  html += '<div class="tt-row"><span class="tt-label">Time:</span> ' + seg.start.toFixed(2) + 's - ' + seg.end.toFixed(2) + 's (' + (seg.end - seg.start).toFixed(2) + 's)</div>';
+  if (stats) {
+    html += '<div class="tt-row"><span class="tt-label">Confidence:</span> avg ' + stats.avg.toFixed(3) + ' | min ' + stats.min.toFixed(3) + ' | max ' + stats.max.toFixed(3) + '</div>';
+  }
+  html += '<div class="tt-row"><span class="tt-label">RMS:</span> ' + seg.rms.toFixed(1) + ' dB</div>';
+  if (adaptiveVAD) {
+    html += '<div class="tt-row"><span class="tt-label">Baseline:</span> ' + baselineDB.toFixed(1) + ' dB | <span class="tt-label">EnergyOffset:</span> ' + energyOffsetDB.toFixed(1) + ' dB</div>';
+  }
+  if (isFiltered) {
+    html += '<div class="tt-row" style="color:#ff6b6b">Discarded by energy filter</div>';
+  }
+  el.innerHTML = html;
+  var p = el.parentElement;
+  el.style.left = Math.min(x + 12, p.clientWidth - el.offsetWidth - 4) + 'px';
+  el.style.top = Math.max(4, y - el.offsetHeight - 8) + 'px';
+  el.style.display = 'block';
+}
+
+function hideSegmentTooltip() {
+  document.getElementById('vadTooltip').style.display = 'none';
+}
+
 function drawVAD() {
   const p = vadCanvas.parentElement;
   vadCanvas.width = p.clientWidth*2; vadCanvas.height = p.clientHeight*2;
@@ -230,6 +279,41 @@ function ensureVAD() {
 }
 setTimeout(ensureVAD, 100);
 window.addEventListener('resize',()=>{vadChartDrawn=false;ensureVAD();});
+
+(function() {
+  var wrap = document.querySelector('.chart-wrap');
+  var dur = pcmLen / sr;
+
+  function findSegmentAtTime(t) {
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: false };
+    }
+    for (var i = 0; i < filteredSegments.length; i++) {
+      var seg = filteredSegments[i];
+      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: true };
+    }
+    return null;
+  }
+
+  wrap.addEventListener('mousemove', function(e) {
+    var rect = wrap.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var pad = { l: 40, r: 16 };
+    var cw = rect.width - pad.l - pad.r;
+    if (mx < pad.l || mx > rect.width - pad.r) { hideSegmentTooltip(); return; }
+    var t = (mx - pad.l) / cw * dur;
+    var hit = findSegmentAtTime(t);
+    if (hit) {
+      showSegmentTooltip(hit.seg, hit.filtered, mx, my);
+    } else {
+      hideSegmentTooltip();
+    }
+  });
+
+  wrap.addEventListener('mouseleave', hideSegmentTooltip);
+})();
 
 function updateVADCursor(t) {
   const p = vadCanvas.parentElement;

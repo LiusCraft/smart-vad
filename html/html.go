@@ -24,11 +24,15 @@ type ReportData struct {
 	FilteredSegmentPCM [][]float32
 	BackURL            string
 	HasResults         bool
+	AdaptiveVAD        bool
+	BaselineDB         float64
+	EnergyOffsetDB     float64
 }
 
 type Segment struct {
 	Start float64
 	End   float64
+	RMS   float64
 }
 
 type reportTmplData struct {
@@ -49,6 +53,9 @@ type reportTmplData struct {
 	FilteredSegmentAudiosJSON template.JS
 	SegmentFilesJSON          template.JS
 	FilteredCount             int
+	AdaptiveVAD               bool
+	BaselineDB                float64
+	EnergyOffsetDB            float64
 }
 
 func Render(data ReportData, w io.Writer) error {
@@ -85,6 +92,9 @@ func Render(data ReportData, w io.Writer) error {
 		tmplData.FilteredSegmentAudiosJSON = template.JS(encodeSegmentAudios(data.FilteredSegmentPCM, data.SampleRate))
 		tmplData.SegmentFilesJSON = template.JS(encodeStringArray(data.SegmentFiles))
 		tmplData.FilteredCount = len(data.FilteredSegments)
+		tmplData.AdaptiveVAD = data.AdaptiveVAD
+		tmplData.BaselineDB = data.BaselineDB
+		tmplData.EnergyOffsetDB = data.EnergyOffsetDB
 	}
 
 	tmpl, err := template.New("report").Parse(templates.Report)
@@ -128,7 +138,7 @@ func encodeSegments(segments []Segment) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		fmt.Fprintf(&b, `{"start":%.4f,"end":%.4f}`, s.Start, s.End)
+		fmt.Fprintf(&b, `{"start":%.4f,"end":%.4f,"rms":%.2f}`, s.Start, s.End, s.RMS)
 	}
 	b.WriteByte(']')
 	return b.String()

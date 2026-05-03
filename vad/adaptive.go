@@ -94,6 +94,9 @@ type AdaptiveDetector struct {
 
 	rawSegments  []Segment // pre-filter segments, for inspection
 	keptSegments []Segment // post-filter segments retained
+
+	baselineDB     float64
+	energyOffsetDB float64
 }
 
 func NewAdaptiveDetector(cfg AdaptiveConfig) (*AdaptiveDetector, error) {
@@ -183,6 +186,8 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 	}
 
 	baseline := a.computeBaseline()
+	a.baselineDB = baseline
+	a.energyOffsetDB = a.cfg.EnergyOffsetDB
 	threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
 
 	a.inner.SetThreshold(threshold)
@@ -243,6 +248,14 @@ func (a *AdaptiveDetector) Process(chunk []float32) error {
 
 func (a *AdaptiveDetector) Flush() Result {
 	return a.inner.Flush()
+}
+
+func (a *AdaptiveDetector) BaselineDB() float64 {
+	return a.baselineDB
+}
+
+func (a *AdaptiveDetector) EnergyOffsetDB() float64 {
+	return a.energyOffsetDB
 }
 
 func (a *AdaptiveDetector) Destroy() error {
