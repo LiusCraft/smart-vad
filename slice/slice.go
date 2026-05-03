@@ -77,6 +77,26 @@ func WriteWAV(filename string, pcm []float32, sampleRate int) error {
 	return nil
 }
 
+func Resample(pcm []float32, srcRate, dstRate int) []float32 {
+	if srcRate == dstRate {
+		return pcm
+	}
+	ratio := float64(srcRate) / float64(dstRate)
+	outLen := int(math.Round(float64(len(pcm)) / ratio))
+	out := make([]float32, outLen)
+	for i := 0; i < outLen; i++ {
+		srcIdx := float64(i) * ratio
+		idx := int(srcIdx)
+		frac := srcIdx - float64(idx)
+		if idx+1 < len(pcm) {
+			out[i] = float32(float64(pcm[idx])*(1-frac) + float64(pcm[idx+1])*frac)
+		} else {
+			out[i] = pcm[idx]
+		}
+	}
+	return out
+}
+
 func dirname(path string) string {
 	for i := len(path) - 1; i >= 0; i-- {
 		if path[i] == '/' {

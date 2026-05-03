@@ -443,7 +443,21 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pcm := buf.AsFloat32Buffer().Data
-	sr := dec.SampleRate
+	sr := int(dec.SampleRate)
+
+	targetSR := 0
+	fmt.Sscanf(r.FormValue("samplerate"), "%d", &targetSR)
+
+	if targetSR != 0 && targetSR != 16000 && targetSR != 8000 {
+		http.Error(w, fmt.Sprintf("unsupported target sample rate: %d", targetSR), 400)
+		return
+	}
+
+	if targetSR != 0 && sr != targetSR {
+		log.Printf("Resampling from %d Hz to %d Hz", sr, targetSR)
+		pcm = slice.Resample(pcm, sr, targetSR)
+		sr = targetSR
+	}
 
 	if sr != 16000 && sr != 8000 {
 		http.Error(w, fmt.Sprintf("unsupported sample rate: %d", sr), 400)

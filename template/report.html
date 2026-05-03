@@ -60,10 +60,20 @@ h1{font-size:24px;margin-bottom:4px}
 <p>Upload a WAV file (16kHz mono) for voice activity detection and slicing</p>
 <form action="/analyze" method="post" enctype="multipart/form-data" id="form">
 <input type="file" name="audio" accept=".wav" required>
+<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+<label class="adaptive-label">
+  Sample Rate:
+  <select name="samplerate" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">
+    <option value="0">Auto (file rate)</option>
+    <option value="16000" selected>16000 Hz</option>
+    <option value="8000">8000 Hz</option>
+  </select>
+</label>
 <label class="adaptive-label">
   <input type="checkbox" name="adaptive" value="true">
   Adaptive VAD (dynamic noise floor, energy filter)
 </label>
+</div>
 <button type="submit">{{if .HasResults}}Re-analyze{{else}}Analyze{{end}}</button>
 </form>
 <div class="loading" id="loading"><span class="spinner"></span>Processing...</div>

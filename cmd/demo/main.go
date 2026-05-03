@@ -21,6 +21,7 @@ func main() {
 	minSilence := flag.Int("min-silence", 100, "min silence duration in ms")
 	minSpeech := flag.Int("min-speech", 100, "min speech duration in ms")
 	padMs := flag.Int("pad", 30, "padding around segments in ms")
+	targetSR := flag.Int("samplerate", 16000, "target sample rate (16000 or 8000)")
 	adaptive := flag.Bool("adaptive", false, "enable adaptive VAD (dynamic baseline threshold)")
 	flag.Parse()
 
@@ -47,6 +48,16 @@ func main() {
 
 	pcm := buf.AsFloat32Buffer().Data
 	sampleRate := int(dec.SampleRate)
+
+	if *targetSR != 16000 && *targetSR != 8000 {
+		log.Fatalf("unsupported target sample rate: %d (use 8000 or 16000)", *targetSR)
+	}
+
+	if sampleRate != *targetSR {
+		log.Printf("Resampling from %d Hz to %d Hz", sampleRate, *targetSR)
+		pcm = slice.Resample(pcm, sampleRate, *targetSR)
+		sampleRate = *targetSR
+	}
 
 	if sampleRate != 16000 && sampleRate != 8000 {
 		log.Fatalf("unsupported sample rate: %d (use 8000 or 16000)", sampleRate)

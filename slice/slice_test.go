@@ -40,6 +40,41 @@ func TestSplitBounds(t *testing.T) {
 	}
 }
 
+func TestResampleIdentical(t *testing.T) {
+	pcm := []float32{0.1, 0.2, 0.3, 0.4, 0.5}
+	out := Resample(pcm, 16000, 16000)
+	if len(out) != len(pcm) {
+		t.Errorf("len = %d, want %d", len(out), len(pcm))
+	}
+	for i, v := range pcm {
+		if out[i] != v {
+			t.Errorf("out[%d] = %f, want %f", i, out[i], v)
+		}
+	}
+}
+
+func TestResampleDownsample(t *testing.T) {
+	pcm := make([]float32, 48000)
+	for i := range pcm {
+		pcm[i] = float32(math.Sin(2 * math.Pi * 440 * float64(i) / 48000))
+	}
+	out := Resample(pcm, 48000, 16000)
+	if len(out) != 16000 {
+		t.Errorf("len = %d, want 16000", len(out))
+	}
+	if out[0] != pcm[0] {
+		t.Errorf("first sample mismatch")
+	}
+}
+
+func TestResampleUpsample(t *testing.T) {
+	pcm := []float32{0.1, 0.2, 0.3}
+	out := Resample(pcm, 8000, 16000)
+	if len(out) != 6 {
+		t.Errorf("len = %d, want 6", len(out))
+	}
+}
+
 func TestWriteWAV(t *testing.T) {
 	pcm := make([]float32, 16000)
 	for i := range pcm {
