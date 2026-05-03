@@ -111,6 +111,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		session.adaptDetector = ad
 		session.detector = ad.Inner()
+		defer ad.Destroy()
 	} else {
 		d, err := vad.NewDetector(vad.Config{
 			ModelPath:            modelPath,
@@ -272,6 +273,11 @@ func (s *wsSession) processChunk(pcm []float32) {
 			"type":      "threshold",
 			"threshold": s.detector.GetThreshold(),
 		})
+		s.conn.WriteJSON(map[string]interface{}{
+			"type":             "adaptive_info",
+			"baseline_db":      s.adaptDetector.BaselineDB(),
+			"energy_offset_db": s.adaptDetector.EnergyOffsetDB(),
+		})
 	}
 }
 
@@ -279,7 +285,28 @@ func (s *wsSession) flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Check for open segment before flush
+	preSegs := s.detector.GetSegments()
+	hadOpen := len(preSegs) > 0 && preSegs[len(preSegs)-1].End == 0
+
 	result := s.detector.Flush()
+
+	// Send segment_end for the segment that was just closed by Flush()
+	if hadOpen && len(result.Segments) > 0 {
+		last := result.Segments[len(result.Segments)-1]
+		rms := 0.0
+		startSample := int(math.Round(last.Start * 16000))
+		endSample := int(math.Round(last.End * 16000))
+		if startSample >= 0 && endSample <= len(s.pcmBuf) && startSample < endSample {
+			rms = vad.RMS(s.pcmBuf[startSample:endSample])
+		}
+		s.conn.WriteJSON(map[string]interface{}{
+			"type":  "segment_end",
+			"start": last.Start,
+			"end":   last.End,
+			"rms":   rms,
+		})
+	}
 
 	// Build merged WAV from segments
 	var mergedWAV []byte
