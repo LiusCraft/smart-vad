@@ -13,12 +13,24 @@ Voice Activity Detection (VAD) slicing tool powered by [Silero VAD](https://gith
 
 ## Quick Start
 
+### Make (recommended)
+
+```bash
+make init            # 安装 onnxruntime + 下载 Silero VAD 模型
+make run-server      # 构建并启动 HTTP 服务 (localhost:8080)
+make run-demo INPUT=audio.wav   # 构建并运行 CLI 分析
+make test            # 运行测试
+make clean           # 清理编译产物
+```
+
+### Manual
+
 ```bash
 # Install ONNX Runtime (macOS)
 brew install onnxruntime
 
 # Download Silero VAD model
-pip install silero-vad
+pip3 install silero-vad
 cp $(python3 -c "import silero_vad; import os; print(os.path.join(os.path.dirname(silero_vad.__file__),'data','silero_vad.onnx'))") .
 
 # Run CLI (standard mode)
