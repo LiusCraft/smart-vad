@@ -126,8 +126,8 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.detector = d
+		defer session.detector.Destroy()
 	}
-	defer session.detector.Destroy()
 	session.detector.Reset()
 
 	// Send initial adaptive info
