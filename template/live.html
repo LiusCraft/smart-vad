@@ -288,6 +288,8 @@ async function startMic() {
   processor.onaudioprocess = e => {
     if (!isRunning) return;
     const input = e.inputBuffer.getChannelData(0);
+    const output = e.outputBuffer.getChannelData(0);
+    output.set(input);
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(input);
   };
   source.connect(processor);
