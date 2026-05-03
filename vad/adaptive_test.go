@@ -13,8 +13,8 @@ func TestFrameRMS(t *testing.T) {
 		delta float64
 	}{
 		{"silence", make([]float32, 512), -300, 10},
-		{"sine half amplitude", genSine(440, 512, 0.5), -6.02, 0.1},
-		{"sine full amplitude", genSine(440, 512, 1.0), 0, 0.1},
+		{"sine half amplitude", genSine(440, 512, 0.5), -9.03, 0.1},
+		{"sine full amplitude", genSine(440, 512, 1.0), -3.01, 0.1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -132,6 +132,50 @@ func TestComputeBaseline(t *testing.T) {
 	baseline := a.computeBaseline()
 	if baseline != -20 {
 		t.Errorf("baseline = %.1f, want -20 (P85 of 100 frames: 80 at -50, 20 at -20)", baseline)
+	}
+}
+
+func TestAdaptiveConfigValidation(t *testing.T) {
+	// Defaults should be set
+	cfg := AdaptiveConfig{
+		DetectorConfig: Config{ModelPath: "test.onnx", SampleRate: 16000, Threshold: 0.5},
+	}
+	cfg.setDefaults()
+	if cfg.WindowDuration != 30 {
+		t.Errorf("WindowDuration = %.0f, want 30", cfg.WindowDuration)
+	}
+	if cfg.Percentile != 0.85 {
+		t.Errorf("Percentile = %.2f, want 0.85", cfg.Percentile)
+	}
+	if cfg.EnergyOffsetDB != 6 {
+		t.Errorf("EnergyOffsetDB = %.0f, want 6", cfg.EnergyOffsetDB)
+	}
+	if cfg.AdaptThresholdMin != 0.5 {
+		t.Errorf("AdaptThresholdMin = %.1f, want 0.5", cfg.AdaptThresholdMin)
+	}
+	if cfg.AdaptThresholdMax != 0.85 {
+		t.Errorf("AdaptThresholdMax = %.2f, want 0.85", cfg.AdaptThresholdMax)
+	}
+	if cfg.AdaptMinSpeechMin != 250 {
+		t.Errorf("AdaptMinSpeechMin = %d, want 250", cfg.AdaptMinSpeechMin)
+	}
+	if cfg.AdaptMinSpeechMax != 600 {
+		t.Errorf("AdaptMinSpeechMax = %d, want 600", cfg.AdaptMinSpeechMax)
+	}
+}
+
+func TestAdaptiveConfigValidationCustom(t *testing.T) {
+	// Custom values should NOT be overwritten by setDefaults
+	cfg := AdaptiveConfig{
+		WindowDuration: 60,
+		Percentile:     0.9,
+	}
+	cfg.setDefaults()
+	if cfg.WindowDuration != 60 {
+		t.Errorf("WindowDuration should stay 60, got %.0f", cfg.WindowDuration)
+	}
+	if cfg.Percentile != 0.9 {
+		t.Errorf("Percentile should stay 0.9, got %.2f", cfg.Percentile)
 	}
 }
 

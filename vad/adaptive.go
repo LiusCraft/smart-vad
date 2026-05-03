@@ -42,7 +42,7 @@ func frameRMS(frame []float32) float64 {
 		sum += float64(s) * float64(s)
 	}
 	rms := math.Sqrt(sum / float64(len(frame)))
-	return 20*math.Log10(rms+1e-15) + 3.01
+	return 20 * math.Log10(rms+1e-15)
 }
 
 func lerp(a, b, t float64) float64 { return a + (b-a)*t }
