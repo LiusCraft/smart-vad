@@ -1,708 +1,1263 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart VAD — Voice Activity Detection</title>
-<script src="https://unpkg.com/wavesurfer.js@7"></script>
-<script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
-<style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#000000;
-  --surface:#0d0d0d;
-  --card:#1a1a1a;
-  --card-hover:#242424;
-  --fg:#ffffff;
-  --muted:#a7a7a7;
-  --dim:#5e5e5e;
-  --border:#2a2a2a;
-  --accent:#76b900;
-  --accent-hover:#8ad800;
-  --danger:#e52020;
-  --danger-bg:#1a0808;
-  --warn:#f1c40f;
-  --font:'SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-  --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-  --radius:2px;
-  --shadow:0 4px 24px rgba(0,0,0,0.5);
-}
-body{
-  font-family:var(--font-body);
-  background:var(--bg);
-  color:var(--fg);
-  min-height:100vh;
-  -webkit-font-smoothing:antialiased;
-}
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Smart VAD — Voice Activity Detection</title>
+        <script>
+            (function () {
+                var t = localStorage.getItem("vad_theme");
+                if (!t)
+                    t = window.matchMedia("(prefers-color-scheme:light)")
+                        .matches
+                        ? "light"
+                        : "dark";
+                document.documentElement.setAttribute("data-theme", t);
+            })();
+        </script>
+        <script src="https://unpkg.com/wavesurfer.js@7"></script>
+        <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+        <style>
+            *,
+            *::before,
+            *::after {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            :root {
+                --bg: #000000;
+                --surface: #0d0d0d;
+                --card: #1a1a1a;
+                --card-hover: #242424;
+                --fg: #ffffff;
+                --muted: #a7a7a7;
+                --dim: #5e5e5e;
+                --border: #2a2a2a;
+                --accent: #76b900;
+                --accent-hover: #8ad800;
+                --danger: #e52020;
+                --danger-bg: #1a0808;
+                --warn: #f1c40f;
+                --font:
+                    "SF Pro Display", -apple-system, BlinkMacSystemFont,
+                    "Segoe UI", system-ui, sans-serif;
+                --font-body:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+                    sans-serif;
+                --radius: 2px;
+                --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+            }
+            [data-theme="light"] {
+                --bg: #f5f5f5;
+                --surface: #ffffff;
+                --card: #e8e8e8;
+                --card-hover: #dcdcdc;
+                --fg: #111111;
+                --muted: #666666;
+                --dim: #999999;
+                --border: #d0d0d0;
+                --accent: #6aad00;
+                --accent-hover: #5c9900;
+                --danger: #c41e1e;
+                --danger-bg: #fce8e8;
+                --warn: #b8860b;
+                --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+            }
+            @media (prefers-color-scheme: light) {
+                html:not([data-theme="dark"]):not([data-theme="light"]) {
+                    --bg: #f5f5f5;
+                    --surface: #ffffff;
+                    --card: #e8e8e8;
+                    --card-hover: #dcdcdc;
+                    --fg: #111111;
+                    --muted: #666666;
+                    --dim: #999999;
+                    --border: #d0d0d0;
+                    --accent: #6aad00;
+                    --accent-hover: #5c9900;
+                    --danger: #c41e1e;
+                    --danger-bg: #fce8e8;
+                    --warn: #b8860b;
+                    --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+                }
+            }
+            body {
+                font-family: var(--font-body);
+                background: var(--bg);
+                color: var(--fg);
+                min-height: 100vh;
+                -webkit-font-smoothing: antialiased;
+            }
 
-/* ===== Layout ===== */
-.app-header{
-  background:var(--surface);
-  border-bottom:1px solid var(--border);
-  position:sticky;top:0;z-index:100;
-  backdrop-filter:blur(12px);
-}
-.header-inner{
-  max-width:1200px;margin:0 auto;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 24px;height:56px;
-}
-.logo{display:flex;align-items:center;gap:10px;text-decoration:none}
-.logo-icon{
-  width:28px;height:28px;border-radius:var(--radius);
-  background:var(--accent);display:flex;align-items:center;justify-content:center;
-  font-size:14px;font-weight:700;color:#000;
-}
-.logo-text{font-family:var(--font);font-size:16px;font-weight:700;color:var(--fg);letter-spacing:-0.01em}
-.logo-text span{color:var(--accent)}
-.nav-links{display:flex;gap:4px}
-.nav-links a{
-  font-size:13px;font-weight:600;color:var(--muted);text-decoration:none;
-  padding:6px 14px;border-radius:var(--radius);transition:all .15s;
-}
-.nav-links a:hover{color:var(--fg);background:var(--card)}
-.nav-links a.active{color:var(--accent);background:rgba(118,185,0,0.1)}
+            /* ===== Layout ===== */
+            .app-header {
+                background: var(--surface);
+                border-bottom: 1px solid var(--border);
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                backdrop-filter: blur(12px);
+            }
+            .header-inner {
+                max-width: 1200px;
+                margin: 0 auto;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 24px;
+                height: 56px;
+            }
+            .logo {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                text-decoration: none;
+            }
+            .logo-icon {
+                width: 28px;
+                height: 28px;
+                border-radius: var(--radius);
+                background: var(--accent);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                font-weight: 700;
+                color: #000;
+            }
+            .logo-text {
+                font-family: var(--font);
+                font-size: 16px;
+                font-weight: 700;
+                color: var(--fg);
+                letter-spacing: -0.01em;
+            }
+            .logo-text span {
+                color: var(--accent);
+            }
+            .nav-links {
+                display: flex;
+                gap: 4px;
+                align-items: center;
+            }
+            .nav-links a {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--muted);
+                text-decoration: none;
+                padding: 6px 14px;
+                border-radius: var(--radius);
+                transition: all 0.15s;
+            }
+            .nav-links a:hover {
+                color: var(--fg);
+                background: var(--card);
+            }
+            .nav-links a.active {
+                color: var(--accent);
+                background: rgba(118, 185, 0, 0.1);
+            }
+            .theme-toggle {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--muted);
+                text-decoration: none;
+                padding: 6px 14px;
+                border-radius: var(--radius);
+                transition: all 0.15s;
+                background: transparent;
+                border: none;
+                cursor: pointer;
+                font-family: var(--font-body);
+            }
+            .theme-toggle:hover {
+                color: var(--fg);
+                background: var(--card);
+            }
+            .theme-toggle.active {
+                color: var(--accent);
+                background: rgba(118, 185, 0, 0.1);
+            }
 
-.main-container{
-  max-width:1200px;margin:0 auto;padding:32px 24px 64px;
-}
+            .main-container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 32px 24px 64px;
+            }
 
-/* ===== Upload Section ===== */
-.upload-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:0;overflow:hidden;margin-bottom:32px;
-}
-.upload-header{
-  padding:20px 24px 16px;border-bottom:1px solid var(--border);
-}
-.upload-header h1{font-family:var(--font);font-size:20px;font-weight:700;letter-spacing:-0.01em}
-.upload-header p{font-size:14px;color:var(--muted);margin-top:4px;line-height:1.5}
-.upload-body{padding:20px 24px 24px}
-.upload-body form{display:flex;flex-direction:column;gap:16px}
-.file-drop-zone{
-  position:relative;border:1.5px dashed var(--border);border-radius:var(--radius);
-  padding:32px 20px;text-align:center;cursor:pointer;
-  transition:border-color .2s,background .2s;
-  background:rgba(255,255,255,0.02);
-}
-.file-drop-zone:hover{border-color:var(--accent);background:rgba(118,185,0,0.04)}
-.file-drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
-.file-drop-zone .drop-label{color:var(--muted);font-size:14px;line-height:1.5}
-.file-drop-zone .drop-label strong{color:var(--fg);font-weight:600}
-.file-drop-zone .drop-label .hint{display:block;font-size:12px;color:var(--dim);margin-top:6px}
-.file-drop-zone.has-file{border-color:var(--accent);border-style:solid;background:rgba(118,185,0,0.06)}
-.file-drop-zone.has-file .drop-label{text-align:left}
-.options-row{
-  display:flex;gap:16px;align-items:center;flex-wrap:wrap;
-}
-.option-group{display:flex;align-items:center;gap:8px}
-.option-group label{font-size:13px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:6px}
-.option-group select{
-  background:var(--card);color:var(--fg);border:1px solid var(--border);
-  border-radius:var(--radius);padding:5px 8px;font-size:12px;cursor:pointer;
-  font-family:var(--font-body);
-}
-.option-group select:focus{outline:none;border-color:var(--accent)}
-.checkbox-wrap{position:relative;display:flex;align-items:center}
-.checkbox-wrap input[type=checkbox]{
-  width:15px;height:15px;accent-color:var(--accent);cursor:pointer;margin:0;
-}
-.btn-primary{
-  background:transparent;color:var(--accent);
-  border:2px solid var(--accent);border-radius:var(--radius);
-  padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;
-  transition:all .15s;font-family:var(--font-body);align-self:flex-start;
-  min-width:140px;
-}
-.btn-primary:hover{background:var(--accent-hover);color:#000;border-color:var(--accent-hover)}
-.btn-primary:active{opacity:0.9}
-.btn-primary:disabled{opacity:0.4;cursor:not-allowed;border-color:var(--dim);color:var(--dim)}
-.btn-primary:disabled:hover{background:transparent;color:var(--dim);border-color:var(--dim)}
-.loading-indicator{
-  display:none;align-items:center;gap:10px;font-size:14px;color:var(--muted);
-  margin-top:8px;
-}
-.loading-indicator.show{display:flex}
-.spinner{
-  width:18px;height:18px;border:2px solid var(--border);
-  border-top-color:var(--accent);border-radius:50%;
-  animation:spin .7s linear infinite;
-}
-@keyframes spin{to{transform:rotate(360deg)}}
+            /* ===== Upload Section ===== */
+            .upload-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 0;
+                overflow: hidden;
+                margin-bottom: 32px;
+            }
+            .upload-header {
+                padding: 20px 24px 16px;
+                border-bottom: 1px solid var(--border);
+            }
+            .upload-header h1 {
+                font-family: var(--font);
+                font-size: 20px;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+            .upload-header p {
+                font-size: 14px;
+                color: var(--muted);
+                margin-top: 4px;
+                line-height: 1.5;
+            }
+            .upload-body {
+                padding: 20px 24px 24px;
+            }
+            .upload-body form {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+            .file-drop-zone {
+                position: relative;
+                border: 1.5px dashed var(--border);
+                border-radius: var(--radius);
+                padding: 32px 20px;
+                text-align: center;
+                cursor: pointer;
+                transition:
+                    border-color 0.2s,
+                    background 0.2s;
+                background: rgba(255, 255, 255, 0.02);
+            }
+            .file-drop-zone:hover {
+                border-color: var(--accent);
+                background: rgba(118, 185, 0, 0.04);
+            }
+            .file-drop-zone input {
+                position: absolute;
+                inset: 0;
+                opacity: 0;
+                cursor: pointer;
+            }
+            .file-drop-zone .drop-label {
+                color: var(--muted);
+                font-size: 14px;
+                line-height: 1.5;
+            }
+            .file-drop-zone .drop-label strong {
+                color: var(--fg);
+                font-weight: 600;
+            }
+            .file-drop-zone .drop-label .hint {
+                display: block;
+                font-size: 12px;
+                color: var(--dim);
+                margin-top: 6px;
+            }
+            .file-drop-zone.has-file {
+                border-color: var(--accent);
+                border-style: solid;
+                background: rgba(118, 185, 0, 0.06);
+            }
+            .file-drop-zone.has-file .drop-label {
+                text-align: left;
+            }
+            .options-row {
+                display: flex;
+                gap: 16px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .option-group {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .option-group label {
+                font-size: 13px;
+                color: var(--muted);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .option-group select {
+                background: var(--card);
+                color: var(--fg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 5px 8px;
+                font-size: 12px;
+                cursor: pointer;
+                font-family: var(--font-body);
+            }
+            .option-group select:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+            .checkbox-wrap {
+                position: relative;
+                display: flex;
+                align-items: center;
+            }
+            .checkbox-wrap input[type="checkbox"] {
+                width: 15px;
+                height: 15px;
+                accent-color: var(--accent);
+                cursor: pointer;
+                margin: 0;
+            }
+            .btn-primary {
+                background: transparent;
+                color: var(--accent);
+                border: 2px solid var(--accent);
+                border-radius: var(--radius);
+                padding: 11px 20px;
+                font-size: 14px;
+                font-weight: 700;
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: var(--font-body);
+                align-self: flex-start;
+                min-width: 140px;
+            }
+            .btn-primary:hover {
+                background: var(--accent-hover);
+                color: #000;
+                border-color: var(--accent-hover);
+            }
+            .btn-primary:active {
+                opacity: 0.9;
+            }
+            .btn-primary:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+                border-color: var(--dim);
+                color: var(--dim);
+            }
+            .btn-primary:disabled:hover {
+                background: transparent;
+                color: var(--dim);
+                border-color: var(--dim);
+            }
+            .loading-indicator {
+                display: none;
+                align-items: center;
+                gap: 10px;
+                font-size: 14px;
+                color: var(--muted);
+                margin-top: 8px;
+            }
+            .loading-indicator.show {
+                display: flex;
+            }
+            .spinner {
+                width: 18px;
+                height: 18px;
+                border: 2px solid var(--border);
+                border-top-color: var(--accent);
+                border-radius: 50%;
+                animation: spin 0.7s linear infinite;
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
 
-/* ===== Results ===== */
-.results-header{
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
-  margin-bottom:24px;
-}
-.results-header h1{font-family:var(--font);font-size:22px;font-weight:700;letter-spacing:-0.01em}
-.results-meta{font-size:13px;color:var(--muted)}
-.results-meta span{margin:0 4px}
+            /* ===== Results ===== */
+            .results-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-bottom: 24px;
+            }
+            .results-header h1 {
+                font-family: var(--font);
+                font-size: 22px;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+            .results-meta {
+                font-size: 13px;
+                color: var(--muted);
+            }
+            .results-meta span {
+                margin: 0 4px;
+            }
 
-.stats-grid{
-  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-  gap:12px;margin-bottom:24px;
-}
-.stat-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px 20px;display:flex;flex-direction:column;gap:2px;
-}
-.stat-card .stat-val{font-size:26px;font-weight:700;font-family:var(--font);letter-spacing:-0.02em}
-.stat-card .stat-val.accent{color:var(--accent)}
-.stat-card .stat-val.blue{color:#4a9eff}
-.stat-card .stat-val.green{color:var(--accent)}
-.stat-card .stat-val.orange{color:#df6500}
-.stat-card .stat-val.yellow{color:var(--warn)}
-.stat-card .stat-lbl{font-size:11px;color:var(--dim);text-transform:uppercase;font-weight:600;letter-spacing:0.04em}
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 12px;
+                margin-bottom: 24px;
+            }
+            .stat-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 16px 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+            .stat-card .stat-val {
+                font-size: 26px;
+                font-weight: 700;
+                font-family: var(--font);
+                letter-spacing: -0.02em;
+            }
+            .stat-card .stat-val.accent {
+                color: var(--accent);
+            }
+            .stat-card .stat-val.blue {
+                color: #4a9eff;
+            }
+            .stat-card .stat-val.green {
+                color: var(--accent);
+            }
+            .stat-card .stat-val.orange {
+                color: #df6500;
+            }
+            .stat-card .stat-val.yellow {
+                color: var(--warn);
+            }
+            .stat-card .stat-lbl {
+                font-size: 11px;
+                color: var(--dim);
+                text-transform: uppercase;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+            }
 
-.section-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:20px 24px;margin-bottom:20px;
-}
-.section-card h2{
-  font-family:var(--font);font-size:14px;font-weight:700;
-  color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;
-  margin-bottom:16px;
-}
+            .section-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 20px 24px;
+                margin-bottom: 20px;
+            }
+            .section-card h2 {
+                font-family: var(--font);
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--accent);
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                margin-bottom: 16px;
+            }
 
-/* Waveform */
-.waveform-wrap{width:100%}
-.waveform-wrap ::part(wrapper){background:transparent!important}
-.player-controls{
-  display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:12px;
-  border-top:1px solid var(--border);
-}
-.player-btn{
-  background:var(--card);border:none;color:var(--fg);
-  width:36px;height:36px;border-radius:50%;
-  cursor:pointer;font-size:15px;
-  display:flex;align-items:center;justify-content:center;
-  transition:background .15s;
-}
-.player-btn:hover{background:var(--card-hover)}
-.player-btn:active{background:var(--accent);color:#000}
-.player-time{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;font-family:var(--font-body)}
-.player-speed{
-  margin-left:auto;background:var(--card);color:var(--fg);
-  border:1px solid var(--border);border-radius:var(--radius);
-  padding:4px 10px;font-size:12px;cursor:pointer;font-family:var(--font-body);
-}
-.player-speed:focus{outline:none;border-color:var(--accent)}
+            /* Waveform */
+            .waveform-wrap {
+                width: 100%;
+            }
+            .waveform-wrap ::part(wrapper) {
+                background: transparent !important;
+            }
+            .player-controls {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-top: 12px;
+                padding-top: 12px;
+                border-top: 1px solid var(--border);
+            }
+            .player-btn {
+                background: var(--card);
+                border: none;
+                color: var(--fg);
+                width: 36px;
+                height: 36px;
+                border-radius: 50%;
+                cursor: pointer;
+                font-size: 15px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: background 0.15s;
+            }
+            .player-btn:hover {
+                background: var(--card-hover);
+            }
+            .player-btn:active {
+                background: var(--accent);
+                color: #000;
+            }
+            .player-time {
+                font-size: 13px;
+                color: var(--muted);
+                font-variant-numeric: tabular-nums;
+                font-family: var(--font-body);
+            }
+            .player-speed {
+                margin-left: auto;
+                background: var(--card);
+                color: var(--fg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 4px 10px;
+                font-size: 12px;
+                cursor: pointer;
+                font-family: var(--font-body);
+            }
+            .player-speed:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
 
-/* VAD Chart */
-.chart-wrap{
-  width:100%;height:130px;position:relative;
-  background:var(--card);border-radius:var(--radius);overflow:hidden;
-}
-.chart-wrap canvas{width:100%;height:100%;display:block}
-#vadCursor{
-  position:absolute;top:0;width:2px;height:100%;
-  background:var(--danger);pointer-events:none;display:none;z-index:2;
-}
-#vadTooltip{
-  position:absolute;background:var(--card);border:1px solid var(--accent);
-  border-radius:var(--radius);padding:10px 14px;font-size:12px;line-height:1.6;
-  pointer-events:none;display:none;z-index:20;white-space:nowrap;
-  color:var(--muted);box-shadow:var(--shadow);
-}
-#vadTooltip .tt-title{color:var(--accent);font-weight:600;font-size:13px;margin-bottom:4px}
-#vadTooltip .tt-label{color:var(--dim)}
+            /* VAD Chart */
+            .chart-wrap {
+                width: 100%;
+                height: 130px;
+                position: relative;
+                background: var(--card);
+                border-radius: var(--radius);
+                overflow: hidden;
+            }
+            .chart-wrap canvas {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+            #vadCursor {
+                position: absolute;
+                top: 0;
+                width: 2px;
+                height: 100%;
+                background: var(--danger);
+                pointer-events: none;
+                display: none;
+                z-index: 2;
+            }
+            #vadTooltip {
+                position: absolute;
+                background: var(--card);
+                border: 1px solid var(--accent);
+                border-radius: var(--radius);
+                padding: 10px 14px;
+                font-size: 12px;
+                line-height: 1.6;
+                pointer-events: none;
+                display: none;
+                z-index: 20;
+                white-space: nowrap;
+                color: var(--muted);
+                box-shadow: var(--shadow);
+            }
+            #vadTooltip .tt-title {
+                color: var(--accent);
+                font-weight: 600;
+                font-size: 13px;
+                margin-bottom: 4px;
+            }
+            #vadTooltip .tt-label {
+                color: var(--dim);
+            }
 
-/* Segments Grid */
-.segments-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;
-}
-.segment-card{
-  background:var(--card);border-radius:var(--radius);
-  padding:14px 16px;cursor:pointer;
-  border:1px solid var(--border);border-left:3px solid var(--accent);
-  transition:background .15s,border-color .15s;
-}
-.segment-card:hover{background:var(--card-hover);border-color:var(--accent)}
-.segment-card h3{font-size:14px;font-weight:600;margin-bottom:6px;display:flex;justify-content:space-between}
-.segment-card .time-range{color:var(--muted);font-weight:400;font-size:13px}
-.segment-card .seg-label{color:var(--dim);font-size:12px;margin-top:4px}
-.segment-card audio{width:100%;margin-top:8px;height:32px;border-radius:var(--radius)}
+            /* Segments Grid */
+            .segments-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 12px;
+            }
+            .segment-card {
+                background: var(--card);
+                border-radius: var(--radius);
+                padding: 14px 16px;
+                cursor: pointer;
+                border: 1px solid var(--border);
+                border-left: 3px solid var(--accent);
+                transition:
+                    background 0.15s,
+                    border-color 0.15s;
+            }
+            .segment-card:hover {
+                background: var(--card-hover);
+                border-color: var(--accent);
+            }
+            .segment-card h3 {
+                font-size: 14px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                display: flex;
+                justify-content: space-between;
+            }
+            .segment-card .time-range {
+                color: var(--muted);
+                font-weight: 400;
+                font-size: 13px;
+            }
+            .segment-card .seg-label {
+                color: var(--dim);
+                font-size: 12px;
+                margin-top: 4px;
+            }
+            .segment-card audio {
+                width: 100%;
+                margin-top: 8px;
+                height: 32px;
+                border-radius: var(--radius);
+            }
 
-/* Filtered Segments heading */
-.filtered-heading{
-  font-size:14px;font-weight:700;color:var(--danger);
-  margin:24px 0 12px;display:flex;align-items:center;gap:8px;
-}
-.filtered-heading::before{
-  content:'';width:3px;height:16px;background:var(--danger);border-radius:1px;
-}
+            /* Filtered Segments heading */
+            .filtered-heading {
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--danger);
+                margin: 24px 0 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .filtered-heading::before {
+                content: "";
+                width: 3px;
+                height: 16px;
+                background: var(--danger);
+                border-radius: 1px;
+            }
 
-/* Merged output */
-.filtered-output{
-  background:var(--card);border:1px solid var(--border);
-  border-left:3px solid var(--accent);border-radius:var(--radius);
-  padding:16px 20px;margin-top:24px;
-}
-.filtered-output .output-label{
-  font-size:13px;font-weight:600;color:var(--accent);margin-bottom:10px;
-  display:flex;align-items:center;gap:8px;
-}
-.filtered-output audio{width:100%;border-radius:var(--radius)}
+            /* Merged output */
+            .filtered-output {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-left: 3px solid var(--accent);
+                border-radius: var(--radius);
+                padding: 16px 20px;
+                margin-top: 24px;
+            }
+            .filtered-output .output-label {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--accent);
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .filtered-output audio {
+                width: 100%;
+                border-radius: var(--radius);
+            }
 
-/* Audio element styling */
-audio::-webkit-media-controls-panel{background:var(--card)}
-audio{filter:invert(1) hue-rotate(180deg);opacity:0.85}
-audio:hover{opacity:1}
+            /* Audio element styling */
+            audio::-webkit-media-controls-panel {
+                background: var(--card);
+            }
+            audio {
+                filter: invert(1) hue-rotate(180deg);
+                opacity: 0.85;
+            }
+            audio:hover {
+                opacity: 1;
+            }
 
-/* ===== Responsive ===== */
-@media(max-width:768px){
-  .header-inner{padding:0 16px}
-  .main-container{padding:20px 16px 40px}
-  .upload-body{padding:16px}
-  .section-card{padding:16px}
-  .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .options-row{flex-direction:column;align-items:stretch;gap:12px}
-  .option-group{justify-content:space-between}
-  .btn-primary{align-self:stretch}
-  .segments-grid{grid-template-columns:1fr}
-}
-</style>
-</head>
-<body>
+            /* ===== Responsive ===== */
+            @media (max-width: 768px) {
+                .header-inner {
+                    padding: 0 16px;
+                }
+                .main-container {
+                    padding: 20px 16px 40px;
+                }
+                .upload-body {
+                    padding: 16px;
+                }
+                .section-card {
+                    padding: 16px;
+                }
+                .stats-grid {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+                .options-row {
+                    flex-direction: column;
+                    align-items: stretch;
+                    gap: 12px;
+                }
+                .option-group {
+                    justify-content: space-between;
+                }
+                .btn-primary {
+                    align-self: stretch;
+                }
+                .segments-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <header class="app-header">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">V</div>
+                    <span class="logo-text">Smart <span>VAD</span></span>
+                </a>
+                <nav class="nav-links">
+                    <a href="/" class="active">Analyze</a>
+                    <a href="/live">Live</a>
+                    <button class="theme-toggle" id="themeToggle">Light</button>
+                </nav>
+            </div>
+        </header>
 
-<header class="app-header">
-  <div class="header-inner">
-    <a href="/" class="logo">
-      <div class="logo-icon">V</div>
-      <span class="logo-text">Smart <span>VAD</span></span>
-    </a>
-    <nav class="nav-links">
-      <a href="/" class="active">Analyze</a>
-      <a href="/live">Live</a>
-    </nav>
-  </div>
-</header>
+        <div class="main-container">
+            <div class="upload-card">
+                <div class="upload-header">
+                    <h1>Voice Activity Detection</h1>
+                    <p>
+                        Upload a WAV file (16 kHz mono) for speech detection,
+                        segmentation, and visualization
+                    </p>
+                </div>
+                <div class="upload-body">
+                    <form
+                        action="/analyze"
+                        method="post"
+                        enctype="multipart/form-data"
+                        id="form"
+                    >
+                        <div class="file-drop-zone" id="dropZone">
+                            <input
+                                type="file"
+                                name="audio"
+                                accept=".wav"
+                                required
+                                id="fileInput"
+                            />
+                            <div class="drop-label">
+                                <strong>Choose a WAV file</strong> or drag it
+                                here
+                                <span class="hint"
+                                    >Supports 16 kHz mono WAV · Automatically
+                                    resampled if needed</span
+                                >
+                            </div>
+                        </div>
 
-<div class="main-container">
+                        <div class="options-row">
+                            <div class="option-group">
+                                <label
+                                    >Sample Rate:
+                                    <select name="samplerate">
+                                        <option value="0">
+                                            Auto (file rate)
+                                        </option>
+                                        <option value="16000" selected>
+                                            16 000 Hz
+                                        </option>
+                                        <option value="8000">8 000 Hz</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="option-group">
+                                <label class="checkbox-wrap">
+                                    <input
+                                        type="checkbox"
+                                        name="adaptive"
+                                        value="true"
+                                        {{if
+                                        .AdaptiveChecked}}checked{{end}}
+                                    />
+                                    <span style="padding-left: 6px"
+                                        >Adaptive VAD</span
+                                    >
+                                </label>
+                            </div>
+                            <div class="option-group">
+                                <label class="checkbox-wrap">
+                                    <input
+                                        type="checkbox"
+                                        name="disable_rms"
+                                        value="true"
+                                        {{if
+                                        .DisableRMSChecked}}checked{{end}}
+                                    />
+                                    <span style="padding-left: 6px"
+                                        >Disable RMS filter</span
+                                    >
+                                </label>
+                            </div>
+                        </div>
 
-<div class="upload-card">
-  <div class="upload-header">
-    <h1>Voice Activity Detection</h1>
-    <p>Upload a WAV file (16 kHz mono) for speech detection, segmentation, and visualization</p>
-  </div>
-  <div class="upload-body">
-    <form action="/analyze" method="post" enctype="multipart/form-data" id="form">
-      <div class="file-drop-zone" id="dropZone">
-        <input type="file" name="audio" accept=".wav" required id="fileInput">
-        <div class="drop-label">
-          <strong>Choose a WAV file</strong> or drag it here
-          <span class="hint">Supports 16 kHz mono WAV · Automatically resampled if needed</span>
+                        <button type="submit" class="btn-primary">
+                            {{if .HasResults}}Re-analyze{{else}}Analyze{{end}}
+                        </button>
+                    </form>
+
+                    <div class="loading-indicator" id="loading">
+                        <span class="spinner"></span>Processing audio…
+                    </div>
+                </div>
+            </div>
+
+            {{if .HasResults}}
+
+            <div class="results-header">
+                <h1>Analysis Report</h1>
+                <div class="results-meta">
+                    <span>{{.SampleRate}} Hz</span> ·
+                    <span>{{.Duration}}s</span> ·
+                    <span>{{.SegmentCount}} segments</span>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-val blue"
+                        >{{.Duration}}<span
+                            style="font-size: 14px; color: var(--dim)"
+                            >s</span
+                        ></span
+                    >
+                    <span class="stat-lbl">Duration</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val green">{{.SegmentCount}}</span>
+                    <span class="stat-lbl">Segments</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val orange"
+                        >{{.WindowMs}}<span
+                            style="font-size: 14px; color: var(--dim)"
+                            >ms</span
+                        ></span
+                    >
+                    <span class="stat-lbl">Window</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-val yellow">{{.SpeechRatio}}</span>
+                    <span class="stat-lbl">Speech Ratio</span>
+                </div>
+            </div>
+
+            <div class="section-card">
+                <h2>Waveform &amp; Playback</h2>
+                <div class="waveform-wrap">
+                    <div id="waveform" style="width: 100%; height: 160px"></div>
+                </div>
+                <div class="player-controls">
+                    <button class="player-btn" id="playBtn">&#9654;</button>
+                    <span class="player-time"
+                        ><span id="currentTime">0:00</span> /
+                        <span id="totalTime">{{.TotalTime}}</span></span
+                    >
+                    <select class="player-speed" id="speedSelect">
+                        <option value="0.5">0.5×</option>
+                        <option value="0.75">0.75×</option>
+                        <option value="1" selected>1×</option>
+                        <option value="1.25">1.25×</option>
+                        <option value="1.5">1.5×</option>
+                        <option value="2">2×</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="section-card">
+                <h2>VAD Confidence</h2>
+                <div class="chart-wrap">
+                    <canvas id="vadCanvas"></canvas>
+                    <div id="vadCursor"></div>
+                    <div id="vadTooltip"></div>
+                </div>
+            </div>
+
+            <div class="section-card">
+                <h2>
+                    Sliced Segments ({{.SegmentCount}}{{if .FilteredCount}},
+                    {{.FilteredCount}} filtered by energy{{end}})
+                </h2>
+                <div id="segments" class="segments-grid"></div>
+            </div>
+
+            <script>
+                const sr = {{.SampleRate}};
+                const windowMs = {{.WindowMs}};
+                const adaptiveVAD = {{.AdaptiveVAD}};
+                const baselineDB = {{.BaselineDB}};
+                const energyOffsetDB = {{.EnergyOffsetDB}};
+                const pcmLen = {{.PCMLength}};
+                const vadProbs = {{.VADProbsJSON}};
+                const segments = {{.SegmentsJSON}};
+                const filteredSegments = {{.FilteredSegmentsJSON}};
+                const segmentAudios = {{.SegmentAudiosJSON}};
+                const filteredSegmentAudios = {{.FilteredSegmentAudiosJSON}};
+                const segmentFiles = {{.SegmentFilesJSON}};
+
+                function pcmToWav(samples, sr) {
+                  const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+                  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+                  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt ');
+                  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+                  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+                  w(36,'data'); v.setUint32(40,n*2,true);
+                  for (let i = 0; i < n; i++) {
+                    const s = Math.max(-1,Math.min(1,samples[i]));
+                    v.setInt16(44+i*2, s<0 ? s*0x8000 : s*0x7FFF, true);
+                  }
+                  return new Blob([buf], {type:'audio/wav'});
+                }
+
+                const fullAudioBlob = pcmToWav({{.WaveformJSON}}, sr);
+                const fullAudioUrl = URL.createObjectURL(fullAudioBlob);
+
+                const ws = WaveSurfer.create({
+                  container:'#waveform', waveColor:'#4a9eff', progressColor:'#76b900',
+                  cursorColor:'#e52020', barWidth:2, barGap:1, barRadius:2, height:160,
+                  backend:'WebAudio'
+                });
+                ws.load(fullAudioUrl);
+                ws.on('ready', () => {
+                  const r = ws.registerPlugin(WaveSurfer.Regions.create());
+                  segments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(118,185,0,0.25)',drag:false,resize:false}));
+                  filteredSegments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(229,32,32,0.3)',drag:false,resize:false}));
+                  document.getElementById('totalTime').textContent = formatTime(ws.getDuration());
+                });
+                ws.on('timeupdate', t => {
+                  document.getElementById('currentTime').textContent = formatTime(t);
+                  updateVADCursor(t);
+                  updatePlayButton();
+                });
+                ws.on('finish', () => updatePlayButton());
+
+                function formatTime(t) {
+                  const m = Math.floor(t/60), s = Math.floor(t%60);
+                  return m + ':' + String(s).padStart(2,'0');
+                }
+
+                const playBtn = document.getElementById('playBtn');
+                playBtn.addEventListener('click', () => ws.playPause());
+                function updatePlayButton() {
+                  playBtn.innerHTML = ws.isPlaying() ? '&#9646;&#9646;' : '&#9654;';
+                }
+
+                const speedSelect = document.getElementById('speedSelect');
+                speedSelect.addEventListener('change', () => {
+                  const rate = parseFloat(speedSelect.value);
+                  ws.setPlaybackRate(rate);
+                  document.querySelectorAll('#segments audio').forEach(a => a.playbackRate = rate);
+                });
+
+                const vadCanvas = document.getElementById('vadCanvas');
+                const vadCursor = document.getElementById('vadCursor');
+
+                function segmentConfidenceStats(seg) {
+                  var frameSec = windowMs / 1000;
+                  var startFrame = Math.floor(seg.start / frameSec);
+                  var endFrame = Math.min(vadProbs.length - 1, Math.ceil(seg.end / frameSec));
+                  var slice = vadProbs.slice(startFrame, endFrame + 1);
+                  if (slice.length === 0) return null;
+                  var sum = slice.reduce(function(a, b) { return a + b; }, 0);
+                  return {
+                    avg: sum / slice.length,
+                    min: Math.min.apply(null, slice),
+                    max: Math.max.apply(null, slice)
+                  };
+                }
+
+                function showSegmentTooltip(seg, isFiltered, x, y) {
+                  var el = document.getElementById('vadTooltip');
+                  var stats = segmentConfidenceStats(seg);
+                  var idx = isFiltered ? filteredSegments.indexOf(seg) : segments.indexOf(seg);
+                  var label = isFiltered ? 'Filtered ' + (idx + 1) : 'Segment ' + (idx + 1);
+                  var html = '<div class="tt-title">' + label + '</div>';
+                  html += '<div class="tt-row"><span class="tt-label">Time:</span> ' + seg.start.toFixed(2) + 's - ' + seg.end.toFixed(2) + 's (' + (seg.end - seg.start).toFixed(2) + 's)</div>';
+                  if (stats) {
+                    html += '<div class="tt-row"><span class="tt-label">Confidence:</span> avg ' + stats.avg.toFixed(3) + ' | min ' + stats.min.toFixed(3) + ' | max ' + stats.max.toFixed(3) + '</div>';
+                  }
+                  html += '<div class="tt-row"><span class="tt-label">RMS:</span> ' + seg.rms.toFixed(1) + ' dB</div>';
+                  if (adaptiveVAD) {
+                    html += '<div class="tt-row"><span class="tt-label">Baseline:</span> ' + baselineDB.toFixed(1) + ' dB | <span class="tt-label">EnergyOffset:</span> ' + energyOffsetDB.toFixed(1) + ' dB</div>';
+                  }
+                  if (isFiltered) {
+                    html += '<div class="tt-row" style="color:#e52020">Discarded by energy filter</div>';
+                  }
+                  el.innerHTML = html;
+                  var p = el.parentElement;
+                  el.style.left = Math.min(x + 12, p.clientWidth - el.offsetWidth - 4) + 'px';
+                  el.style.top = Math.max(4, y - el.offsetHeight - 8) + 'px';
+                  el.style.display = 'block';
+                }
+
+                function hideSegmentTooltip() {
+                  document.getElementById('vadTooltip').style.display = 'none';
+                }
+
+                function drawVAD() {
+                  const p = vadCanvas.parentElement;
+                  vadCanvas.width = p.clientWidth*2; vadCanvas.height = p.clientHeight*2;
+                  vadCanvas.style.width = p.clientWidth+'px'; vadCanvas.style.height = p.clientHeight+'px';
+                  const ctx = vadCanvas.getContext('2d'); ctx.scale(2,2);
+                  const W = p.clientWidth, H = p.clientHeight, pad = {t:10,b:22,l:40,r:16};
+                  const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
+                  const dur = pcmLen / sr;
+
+                  ctx.fillStyle='var(--card,#1a1a1a)'; ctx.fillRect(0,0,W,H);
+                  ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1;
+                  ctx.font='10px sans-serif'; ctx.textAlign='right';
+                  for(let i=0;i<=4;i++){
+                    const y=pad.t+ch/4*i;
+                    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+                    ctx.fillStyle='#5e5e5e'; ctx.fillText((1-i*0.25).toFixed(2),pad.l-6,y+4);
+                  }
+                  const ty=pad.t+ch*(1-0.5);
+                  ctx.strokeStyle='rgba(229,32,32,0.5)'; ctx.setLineDash([4,4]);
+                  ctx.beginPath(); ctx.moveTo(pad.l,ty); ctx.lineTo(W-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
+                  ctx.fillStyle='rgba(229,32,32,0.7)'; ctx.font='9px sans-serif'; ctx.textAlign='left';
+                  ctx.fillText('threshold 0.5',W-pad.r-72,ty-4);
+
+                  if(vadProbs.length<2)return;
+                  ctx.strokeStyle='#76b900'; ctx.lineWidth=2; ctx.beginPath();
+                  for(let i=0;i<vadProbs.length;i++){
+                    const t = i * 512 / sr;
+                    const x = pad.l + cw * t / dur;
+                    const y = pad.t + ch * (1 - Math.min(1, Math.max(0, vadProbs[i])));
+                    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+                  }
+                  ctx.stroke();
+                  ctx.lineTo(pad.l+cw, pad.t+ch); ctx.lineTo(pad.l, pad.t+ch); ctx.closePath();
+                  ctx.fillStyle='rgba(118,185,0,0.08)'; ctx.fill();
+
+                  segments.forEach(s => {
+                    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
+                    ctx.fillStyle='rgba(118,185,0,0.15)';
+                    ctx.fillRect(x1,pad.t,x2-x1,ch);
+                  });
+                  filteredSegments.forEach(s => {
+                    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
+                    ctx.fillStyle='rgba(229,32,32,0.2)';
+                    ctx.fillRect(x1,pad.t,x2-x1,ch);
+                  });
+
+                  ctx.fillStyle='#5e5e5e'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+                  for(let i=0;i<=6;i++){const x=pad.l+cw/6*i; ctx.fillText((dur/6*i).toFixed(1)+'s',x,H-pad.b+10);}
+                }
+                let vadChartDrawn = false;
+                function ensureVAD() {
+                  if(!vadChartDrawn){drawVAD();vadChartDrawn=true;}
+                }
+                setTimeout(ensureVAD, 100);
+                window.addEventListener('resize',()=>{vadChartDrawn=false;ensureVAD();});
+
+                (function() {
+                  var wrap = document.querySelector('.chart-wrap');
+                  var dur = pcmLen / sr;
+
+                  function findSegmentAtTime(t) {
+                    for (var i = 0; i < segments.length; i++) {
+                      var seg = segments[i];
+                      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: false };
+                    }
+                    for (var i = 0; i < filteredSegments.length; i++) {
+                      var seg = filteredSegments[i];
+                      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: true };
+                    }
+                    return null;
+                  }
+
+                  wrap.addEventListener('mousemove', function(e) {
+                    var rect = wrap.getBoundingClientRect();
+                    var mx = e.clientX - rect.left;
+                    var my = e.clientY - rect.top;
+                    var pad = { l: 40, r: 16 };
+                    var cw = rect.width - pad.l - pad.r;
+                    if (mx < pad.l || mx > rect.width - pad.r) { hideSegmentTooltip(); return; }
+                    var t = (mx - pad.l) / cw * dur;
+                    var hit = findSegmentAtTime(t);
+                    if (hit) {
+                      showSegmentTooltip(hit.seg, hit.filtered, mx, my);
+                    } else {
+                      hideSegmentTooltip();
+                    }
+                  });
+
+                  wrap.addEventListener('mouseleave', hideSegmentTooltip);
+                })();
+
+                function updateVADCursor(t) {
+                  const p = vadCanvas.parentElement;
+                  const W = p.clientWidth, pad = {l:40,r:16};
+                  const cw = W-pad.l-pad.r;
+                  const dur = pcmLen / sr;
+                  const x = pad.l + cw * t / dur;
+                  vadCursor.style.left = x + 'px';
+                  vadCursor.style.display = t > 0 && t < dur ? 'block' : 'none';
+                }
+
+                const grid = document.getElementById('segments');
+                segments.forEach((s,i) => {
+                  const card = document.createElement('div'); card.className = 'segment-card';
+                  card.innerHTML = '<h3>Segment '+(i+1)+' <span class="time-range">'+s.start.toFixed(2)+'s &ndash; '+s.end.toFixed(2)+'s</span></h3>'
+                    + '<p class="seg-label">Duration: '+(s.end-s.start).toFixed(2)+'s &middot; '+(segmentFiles[i]||'seg-'+String(i+1).padStart(3,'0')+'.wav')+'</p>'
+                    + (segmentAudios[i] ? '<audio controls src="'+segmentAudios[i]+'"></audio>' : '');
+                  card.addEventListener('click', e => {
+                    if (e.target.closest('audio')) return;
+                    ws.seekTo(s.start/ws.getDuration()); ws.play();
+                  });
+                  const aud = card.querySelector('audio');
+                  if (aud) {
+                    aud.playbackRate = parseFloat(speedSelect.value);
+                    aud.addEventListener('ratechange', () => aud.playbackRate = parseFloat(speedSelect.value));
+                  }
+                  grid.appendChild(card);
+                });
+            </script>
+            {{if .FilteredCount}}
+            <script>
+                document.addEventListener("DOMContentLoaded", () => {
+                    const s = document.getElementById("segments");
+                    const h = document.createElement("h2");
+                    h.style.cssText =
+                        "font-size:14px;font-weight:700;color:#e52020;margin:24px 0 12px;display:flex;align-items:center;gap:8px";
+                    h.textContent =
+                        "Energy-Filtered Segments ({{.FilteredCount}})";
+                    s.parentElement.insertBefore(h, s.nextSibling);
+                    const g = document.createElement("div");
+                    g.className = "segments-grid";
+                    g.style.cssText = "margin-top:12px";
+                    filteredSegments.forEach((seg, i) => {
+                        const card = document.createElement("div");
+                        card.className = "segment-card";
+                        card.style.borderLeft = "3px solid #e52020";
+                        card.innerHTML =
+                            "<h3>Filtered " +
+                            (i + 1) +
+                            ' <span class="time-range">' +
+                            seg.start.toFixed(2) +
+                            "s &ndash; " +
+                            seg.end.toFixed(2) +
+                            "s</span></h3>" +
+                            '<p class="seg-label">Discarded by energy filter &middot; ' +
+                            (seg.end - seg.start).toFixed(2) +
+                            "s</p>" +
+                            (filteredSegmentAudios[i]
+                                ? '<audio controls src="' +
+                                  filteredSegmentAudios[i] +
+                                  '"></audio>'
+                                : "");
+                        const aud = card.querySelector("audio");
+                        if (aud) {
+                            aud.playbackRate = parseFloat(
+                                document.getElementById("speedSelect").value,
+                            );
+                        }
+                        g.appendChild(card);
+                    });
+                    s.parentElement.insertBefore(g, s.nextSibling.nextSibling);
+                });
+            </script>
+            {{end}} {{if .SegmentCount}}
+            <div class="filtered-output">
+                <div class="output-label">
+                    &#9654; Filtered Output ({{.SegmentCount}} segments passed)
+                </div>
+                <audio controls style="width: 100%"></audio>
+            </div>
+            <script>
+                (async function() {
+                  const raw = [];
+                  for (const url of segmentAudios) {
+                    if (!url) continue;
+                    const r = await fetch(url);
+                    const buf = await r.arrayBuffer();
+                    const v = new DataView(buf);
+                    const n = v.getUint32(40, true) / 2;
+                    for (let i = 0; i < n; i++) raw.push(v.getInt16(44 + i*2, true));
+                  }
+                  if (raw.length === 0) return;
+                  const sr = {{.SampleRate}}, n = raw.length;
+                  const out = new ArrayBuffer(44 + n * 2);
+                  const w = new DataView(out);
+                  const s = (o, str) => { for (let i = 0; i < str.length; i++) w.setUint8(o + i, str.charCodeAt(i)); };
+                  s(0,'RIFF'); w.setUint32(4,36+n*2,true); s(8,'WAVE'); s(12,'fmt ');
+                  w.setUint32(16,16,true); w.setUint16(20,1,true); w.setUint16(22,1,true);
+                  w.setUint32(24,sr,true); w.setUint32(28,sr*2,true); w.setUint16(32,2,true); w.setUint16(34,16,true);
+                  s(36,'data'); w.setUint32(40,n*2,true);
+                  for (let i = 0; i < n; i++) w.setInt16(44+i*2, raw[i], true);
+                  document.querySelector('.filtered-output audio').src = URL.createObjectURL(new Blob([out], {type:'audio/wav'}));
+                })();
+            </script>
+            {{end}} {{end}}
+
+            <script>
+                document
+                    .getElementById("form")
+                    .addEventListener("submit", function (e) {
+                        this.querySelector("button").disabled = true;
+                        document
+                            .getElementById("loading")
+                            .classList.add("show");
+                    });
+            </script>
+
+            <script>
+                (function () {
+                    const input = document.getElementById("fileInput");
+                    const zone = document.getElementById("dropZone");
+                    if (!input || !zone) return;
+                    const label = zone.querySelector(".drop-label");
+                    input.addEventListener("change", function () {
+                        if (this.files && this.files[0]) {
+                            zone.classList.add("has-file");
+                            label.innerHTML =
+                                "<strong>" +
+                                this.files[0].name +
+                                '</strong><span class="hint" style="display:block;font-size:12px;color:#5e5e5e;margin-top:4px">' +
+                                (this.files[0].size / 1024).toFixed(1) +
+                                " KB selected</span>";
+                        } else {
+                            zone.classList.remove("has-file");
+                            label.innerHTML =
+                                '<strong>Choose a WAV file</strong> or drag it here<span class="hint" style="display:block;font-size:12px;color:#5e5e5e;margin-top:6px">Supports 16 kHz mono WAV · Automatically resampled if needed</span>';
+                        }
+                    });
+                })();
+            </script>
+
+            <script>
+                (function () {
+                    var btn = document.getElementById("themeToggle");
+                    if (!btn) return;
+                    var html = document.documentElement;
+                    function setLabel() {
+                        var isDark = html.getAttribute("data-theme") === "dark";
+                        btn.innerHTML = isDark
+                            ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg> Light'
+                            : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> Dark';
+                    }
+                    setLabel();
+                    btn.addEventListener("click", function () {
+                        var cur = html.getAttribute("data-theme");
+                        var next = cur === "dark" ? "light" : "dark";
+                        html.setAttribute("data-theme", next);
+                        localStorage.setItem("vad_theme", next);
+                        setLabel();
+                        if (typeof ensureVAD === "function") {
+                            vadChartDrawn = false;
+                            ensureVAD();
+                        }
+                    });
+                    var mq = window.matchMedia("(prefers-color-scheme:light)");
+                    mq.addEventListener("change", function (e) {
+                        if (!localStorage.getItem("vad_theme")) {
+                            var next = e.matches ? "light" : "dark";
+                            html.setAttribute("data-theme", next);
+                            setLabel();
+                            if (typeof ensureVAD === "function") {
+                                vadChartDrawn = false;
+                                ensureVAD();
+                            }
+                        }
+                    });
+                })();
+            </script>
         </div>
-      </div>
-
-      <div class="options-row">
-        <div class="option-group">
-          <label>Sample Rate:
-            <select name="samplerate">
-              <option value="0">Auto (file rate)</option>
-              <option value="16000" selected>16 000 Hz</option>
-              <option value="8000">8 000 Hz</option>
-            </select>
-          </label>
-        </div>
-        <div class="option-group">
-          <label class="checkbox-wrap">
-            <input type="checkbox" name="adaptive" value="true" {{if .AdaptiveChecked}}checked{{end}}>
-            <span style="padding-left:6px">Adaptive VAD</span>
-          </label>
-        </div>
-        <div class="option-group">
-          <label class="checkbox-wrap">
-            <input type="checkbox" name="disable_rms" value="true" {{if .DisableRMSChecked}}checked{{end}}>
-            <span style="padding-left:6px">Disable RMS filter</span>
-          </label>
-        </div>
-      </div>
-
-      <button type="submit" class="btn-primary">{{if .HasResults}}Re-analyze{{else}}Analyze{{end}}</button>
-    </form>
-
-    <div class="loading-indicator" id="loading">
-      <span class="spinner"></span>Processing audio…
-    </div>
-  </div>
-</div>
-
-{{if .HasResults}}
-
-<div class="results-header">
-  <h1>Analysis Report</h1>
-  <div class="results-meta">
-    <span>{{.SampleRate}} Hz</span> · <span>{{.Duration}}s</span> · <span>{{.SegmentCount}} segments</span>
-  </div>
-</div>
-
-<div class="stats-grid">
-  <div class="stat-card">
-    <span class="stat-val blue">{{.Duration}}<span style="font-size:14px;color:var(--dim)">s</span></span>
-    <span class="stat-lbl">Duration</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-val green">{{.SegmentCount}}</span>
-    <span class="stat-lbl">Segments</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-val orange">{{.WindowMs}}<span style="font-size:14px;color:var(--dim)">ms</span></span>
-    <span class="stat-lbl">Window</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-val yellow">{{.SpeechRatio}}</span>
-    <span class="stat-lbl">Speech Ratio</span>
-  </div>
-</div>
-
-<div class="section-card">
-  <h2>Waveform &amp; Playback</h2>
-  <div class="waveform-wrap">
-    <div id="waveform" style="width:100%;height:160px"></div>
-  </div>
-  <div class="player-controls">
-    <button class="player-btn" id="playBtn">&#9654;</button>
-    <span class="player-time"><span id="currentTime">0:00</span> / <span id="totalTime">{{.TotalTime}}</span></span>
-    <select class="player-speed" id="speedSelect">
-      <option value="0.5">0.5×</option>
-      <option value="0.75">0.75×</option>
-      <option value="1" selected>1×</option>
-      <option value="1.25">1.25×</option>
-      <option value="1.5">1.5×</option>
-      <option value="2">2×</option>
-    </select>
-  </div>
-</div>
-
-<div class="section-card">
-  <h2>VAD Confidence</h2>
-  <div class="chart-wrap">
-    <canvas id="vadCanvas"></canvas>
-    <div id="vadCursor"></div>
-    <div id="vadTooltip"></div>
-  </div>
-</div>
-
-<div class="section-card">
-  <h2>Sliced Segments ({{.SegmentCount}}{{if .FilteredCount}}, {{.FilteredCount}} filtered by energy{{end}})</h2>
-  <div id="segments" class="segments-grid"></div>
-</div>
-
-<script>
-const sr = {{.SampleRate}};
-const windowMs = {{.WindowMs}};
-const adaptiveVAD = {{.AdaptiveVAD}};
-const baselineDB = {{.BaselineDB}};
-const energyOffsetDB = {{.EnergyOffsetDB}};
-const pcmLen = {{.PCMLength}};
-const vadProbs = {{.VADProbsJSON}};
-const segments = {{.SegmentsJSON}};
-const filteredSegments = {{.FilteredSegmentsJSON}};
-const segmentAudios = {{.SegmentAudiosJSON}};
-const filteredSegmentAudios = {{.FilteredSegmentAudiosJSON}};
-const segmentFiles = {{.SegmentFilesJSON}};
-
-function pcmToWav(samples, sr) {
-  const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
-  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt ');
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
-  w(36,'data'); v.setUint32(40,n*2,true);
-  for (let i = 0; i < n; i++) {
-    const s = Math.max(-1,Math.min(1,samples[i]));
-    v.setInt16(44+i*2, s<0 ? s*0x8000 : s*0x7FFF, true);
-  }
-  return new Blob([buf], {type:'audio/wav'});
-}
-
-const fullAudioBlob = pcmToWav({{.WaveformJSON}}, sr);
-const fullAudioUrl = URL.createObjectURL(fullAudioBlob);
-
-const ws = WaveSurfer.create({
-  container:'#waveform', waveColor:'#4a9eff', progressColor:'#76b900',
-  cursorColor:'#e52020', barWidth:2, barGap:1, barRadius:2, height:160,
-  backend:'WebAudio'
-});
-ws.load(fullAudioUrl);
-ws.on('ready', () => {
-  const r = ws.registerPlugin(WaveSurfer.Regions.create());
-  segments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(118,185,0,0.25)',drag:false,resize:false}));
-  filteredSegments.forEach(s => r.addRegion({start:s.start,end:s.end,color:'rgba(229,32,32,0.3)',drag:false,resize:false}));
-  document.getElementById('totalTime').textContent = formatTime(ws.getDuration());
-});
-ws.on('timeupdate', t => {
-  document.getElementById('currentTime').textContent = formatTime(t);
-  updateVADCursor(t);
-  updatePlayButton();
-});
-ws.on('finish', () => updatePlayButton());
-
-function formatTime(t) {
-  const m = Math.floor(t/60), s = Math.floor(t%60);
-  return m + ':' + String(s).padStart(2,'0');
-}
-
-const playBtn = document.getElementById('playBtn');
-playBtn.addEventListener('click', () => ws.playPause());
-function updatePlayButton() {
-  playBtn.innerHTML = ws.isPlaying() ? '&#9646;&#9646;' : '&#9654;';
-}
-
-const speedSelect = document.getElementById('speedSelect');
-speedSelect.addEventListener('change', () => {
-  const rate = parseFloat(speedSelect.value);
-  ws.setPlaybackRate(rate);
-  document.querySelectorAll('#segments audio').forEach(a => a.playbackRate = rate);
-});
-
-const vadCanvas = document.getElementById('vadCanvas');
-const vadCursor = document.getElementById('vadCursor');
-
-function segmentConfidenceStats(seg) {
-  var frameSec = windowMs / 1000;
-  var startFrame = Math.floor(seg.start / frameSec);
-  var endFrame = Math.min(vadProbs.length - 1, Math.ceil(seg.end / frameSec));
-  var slice = vadProbs.slice(startFrame, endFrame + 1);
-  if (slice.length === 0) return null;
-  var sum = slice.reduce(function(a, b) { return a + b; }, 0);
-  return {
-    avg: sum / slice.length,
-    min: Math.min.apply(null, slice),
-    max: Math.max.apply(null, slice)
-  };
-}
-
-function showSegmentTooltip(seg, isFiltered, x, y) {
-  var el = document.getElementById('vadTooltip');
-  var stats = segmentConfidenceStats(seg);
-  var idx = isFiltered ? filteredSegments.indexOf(seg) : segments.indexOf(seg);
-  var label = isFiltered ? 'Filtered ' + (idx + 1) : 'Segment ' + (idx + 1);
-  var html = '<div class="tt-title">' + label + '</div>';
-  html += '<div class="tt-row"><span class="tt-label">Time:</span> ' + seg.start.toFixed(2) + 's - ' + seg.end.toFixed(2) + 's (' + (seg.end - seg.start).toFixed(2) + 's)</div>';
-  if (stats) {
-    html += '<div class="tt-row"><span class="tt-label">Confidence:</span> avg ' + stats.avg.toFixed(3) + ' | min ' + stats.min.toFixed(3) + ' | max ' + stats.max.toFixed(3) + '</div>';
-  }
-  html += '<div class="tt-row"><span class="tt-label">RMS:</span> ' + seg.rms.toFixed(1) + ' dB</div>';
-  if (adaptiveVAD) {
-    html += '<div class="tt-row"><span class="tt-label">Baseline:</span> ' + baselineDB.toFixed(1) + ' dB | <span class="tt-label">EnergyOffset:</span> ' + energyOffsetDB.toFixed(1) + ' dB</div>';
-  }
-  if (isFiltered) {
-    html += '<div class="tt-row" style="color:#e52020">Discarded by energy filter</div>';
-  }
-  el.innerHTML = html;
-  var p = el.parentElement;
-  el.style.left = Math.min(x + 12, p.clientWidth - el.offsetWidth - 4) + 'px';
-  el.style.top = Math.max(4, y - el.offsetHeight - 8) + 'px';
-  el.style.display = 'block';
-}
-
-function hideSegmentTooltip() {
-  document.getElementById('vadTooltip').style.display = 'none';
-}
-
-function drawVAD() {
-  const p = vadCanvas.parentElement;
-  vadCanvas.width = p.clientWidth*2; vadCanvas.height = p.clientHeight*2;
-  vadCanvas.style.width = p.clientWidth+'px'; vadCanvas.style.height = p.clientHeight+'px';
-  const ctx = vadCanvas.getContext('2d'); ctx.scale(2,2);
-  const W = p.clientWidth, H = p.clientHeight, pad = {t:10,b:22,l:40,r:16};
-  const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
-  const dur = pcmLen / sr;
-
-  ctx.fillStyle='var(--card,#1a1a1a)'; ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=1;
-  ctx.font='10px sans-serif'; ctx.textAlign='right';
-  for(let i=0;i<=4;i++){
-    const y=pad.t+ch/4*i;
-    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
-    ctx.fillStyle='#5e5e5e'; ctx.fillText((1-i*0.25).toFixed(2),pad.l-6,y+4);
-  }
-  const ty=pad.t+ch*(1-0.5);
-  ctx.strokeStyle='rgba(229,32,32,0.5)'; ctx.setLineDash([4,4]);
-  ctx.beginPath(); ctx.moveTo(pad.l,ty); ctx.lineTo(W-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle='rgba(229,32,32,0.7)'; ctx.font='9px sans-serif'; ctx.textAlign='left';
-  ctx.fillText('threshold 0.5',W-pad.r-72,ty-4);
-
-  if(vadProbs.length<2)return;
-  ctx.strokeStyle='#76b900'; ctx.lineWidth=2; ctx.beginPath();
-  for(let i=0;i<vadProbs.length;i++){
-    const t = i * 512 / sr;
-    const x = pad.l + cw * t / dur;
-    const y = pad.t + ch * (1 - Math.min(1, Math.max(0, vadProbs[i])));
-    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
-  }
-  ctx.stroke();
-  ctx.lineTo(pad.l+cw, pad.t+ch); ctx.lineTo(pad.l, pad.t+ch); ctx.closePath();
-  ctx.fillStyle='rgba(118,185,0,0.08)'; ctx.fill();
-
-  segments.forEach(s => {
-    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
-    ctx.fillStyle='rgba(118,185,0,0.15)';
-    ctx.fillRect(x1,pad.t,x2-x1,ch);
-  });
-  filteredSegments.forEach(s => {
-    const x1=pad.l+cw*s.start/dur, x2=pad.l+cw*s.end/dur;
-    ctx.fillStyle='rgba(229,32,32,0.2)';
-    ctx.fillRect(x1,pad.t,x2-x1,ch);
-  });
-
-  ctx.fillStyle='#5e5e5e'; ctx.font='10px sans-serif'; ctx.textAlign='center';
-  for(let i=0;i<=6;i++){const x=pad.l+cw/6*i; ctx.fillText((dur/6*i).toFixed(1)+'s',x,H-pad.b+10);}
-}
-let vadChartDrawn = false;
-function ensureVAD() {
-  if(!vadChartDrawn){drawVAD();vadChartDrawn=true;}
-}
-setTimeout(ensureVAD, 100);
-window.addEventListener('resize',()=>{vadChartDrawn=false;ensureVAD();});
-
-(function() {
-  var wrap = document.querySelector('.chart-wrap');
-  var dur = pcmLen / sr;
-
-  function findSegmentAtTime(t) {
-    for (var i = 0; i < segments.length; i++) {
-      var seg = segments[i];
-      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: false };
-    }
-    for (var i = 0; i < filteredSegments.length; i++) {
-      var seg = filteredSegments[i];
-      if (t >= seg.start && t <= seg.end) return { seg: seg, filtered: true };
-    }
-    return null;
-  }
-
-  wrap.addEventListener('mousemove', function(e) {
-    var rect = wrap.getBoundingClientRect();
-    var mx = e.clientX - rect.left;
-    var my = e.clientY - rect.top;
-    var pad = { l: 40, r: 16 };
-    var cw = rect.width - pad.l - pad.r;
-    if (mx < pad.l || mx > rect.width - pad.r) { hideSegmentTooltip(); return; }
-    var t = (mx - pad.l) / cw * dur;
-    var hit = findSegmentAtTime(t);
-    if (hit) {
-      showSegmentTooltip(hit.seg, hit.filtered, mx, my);
-    } else {
-      hideSegmentTooltip();
-    }
-  });
-
-  wrap.addEventListener('mouseleave', hideSegmentTooltip);
-})();
-
-function updateVADCursor(t) {
-  const p = vadCanvas.parentElement;
-  const W = p.clientWidth, pad = {l:40,r:16};
-  const cw = W-pad.l-pad.r;
-  const dur = pcmLen / sr;
-  const x = pad.l + cw * t / dur;
-  vadCursor.style.left = x + 'px';
-  vadCursor.style.display = t > 0 && t < dur ? 'block' : 'none';
-}
-
-const grid = document.getElementById('segments');
-segments.forEach((s,i) => {
-  const card = document.createElement('div'); card.className = 'segment-card';
-  card.innerHTML = '<h3>Segment '+(i+1)+' <span class="time-range">'+s.start.toFixed(2)+'s &ndash; '+s.end.toFixed(2)+'s</span></h3>'
-    + '<p class="seg-label">Duration: '+(s.end-s.start).toFixed(2)+'s &middot; '+(segmentFiles[i]||'seg-'+String(i+1).padStart(3,'0')+'.wav')+'</p>'
-    + (segmentAudios[i] ? '<audio controls src="'+segmentAudios[i]+'"></audio>' : '');
-  card.addEventListener('click', e => {
-    if (e.target.closest('audio')) return;
-    ws.seekTo(s.start/ws.getDuration()); ws.play();
-  });
-  const aud = card.querySelector('audio');
-  if (aud) {
-    aud.playbackRate = parseFloat(speedSelect.value);
-    aud.addEventListener('ratechange', () => aud.playbackRate = parseFloat(speedSelect.value));
-  }
-  grid.appendChild(card);
-});
-</script>
-{{if .FilteredCount}}<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const s = document.getElementById('segments');
-  const h = document.createElement('h2');
-  h.style.cssText = 'font-size:14px;font-weight:700;color:#e52020;margin:24px 0 12px;display:flex;align-items:center;gap:8px';
-  h.textContent = 'Energy-Filtered Segments ({{.FilteredCount}})';
-  s.parentElement.insertBefore(h, s.nextSibling);
-  const g = document.createElement('div');
-  g.className = 'segments-grid';
-  g.style.cssText = 'margin-top:12px';
-  filteredSegments.forEach((seg, i) => {
-    const card = document.createElement('div');
-    card.className = 'segment-card';
-    card.style.borderLeft = '3px solid #e52020';
-    card.innerHTML = '<h3>Filtered '+(i+1)+' <span class="time-range">'+seg.start.toFixed(2)+'s &ndash; '+seg.end.toFixed(2)+'s</span></h3>'
-      + '<p class="seg-label">Discarded by energy filter &middot; '+(seg.end-seg.start).toFixed(2)+'s</p>'
-      + (filteredSegmentAudios[i] ? '<audio controls src="'+filteredSegmentAudios[i]+'"></audio>' : '');
-    const aud = card.querySelector('audio');
-    if (aud) {
-      aud.playbackRate = parseFloat(document.getElementById('speedSelect').value);
-    }
-    g.appendChild(card);
-  });
-  s.parentElement.insertBefore(g, s.nextSibling.nextSibling);
-});
-</script>{{end}}
-{{if .SegmentCount}}<div class="filtered-output">
-  <div class="output-label">&#9654; Filtered Output ({{.SegmentCount}} segments passed)</div>
-  <audio controls style="width:100%"></audio>
-</div>
-<script>
-(async function() {
-  const raw = [];
-  for (const url of segmentAudios) {
-    if (!url) continue;
-    const r = await fetch(url);
-    const buf = await r.arrayBuffer();
-    const v = new DataView(buf);
-    const n = v.getUint32(40, true) / 2;
-    for (let i = 0; i < n; i++) raw.push(v.getInt16(44 + i*2, true));
-  }
-  if (raw.length === 0) return;
-  const sr = {{.SampleRate}}, n = raw.length;
-  const out = new ArrayBuffer(44 + n * 2);
-  const w = new DataView(out);
-  const s = (o, str) => { for (let i = 0; i < str.length; i++) w.setUint8(o + i, str.charCodeAt(i)); };
-  s(0,'RIFF'); w.setUint32(4,36+n*2,true); s(8,'WAVE'); s(12,'fmt ');
-  w.setUint32(16,16,true); w.setUint16(20,1,true); w.setUint16(22,1,true);
-  w.setUint32(24,sr,true); w.setUint32(28,sr*2,true); w.setUint16(32,2,true); w.setUint16(34,16,true);
-  s(36,'data'); w.setUint32(40,n*2,true);
-  for (let i = 0; i < n; i++) w.setInt16(44+i*2, raw[i], true);
-  document.querySelector('.filtered-output audio').src = URL.createObjectURL(new Blob([out], {type:'audio/wav'}));
-})();
-</script>{{end}}
-{{end}}
-
-<script>
-document.getElementById('form').addEventListener('submit', function(e) {
-  this.querySelector('button').disabled = true;
-  document.getElementById('loading').classList.add('show');
-});
-</script>
-
-<script>
-(function() {
-  const input = document.getElementById('fileInput');
-  const zone = document.getElementById('dropZone');
-  if (!input || !zone) return;
-  const label = zone.querySelector('.drop-label');
-  input.addEventListener('change', function() {
-    if (this.files && this.files[0]) {
-      zone.classList.add('has-file');
-      label.innerHTML = '<strong>' + this.files[0].name + '</strong><span class="hint" style="display:block;font-size:12px;color:#5e5e5e;margin-top:4px">' + (this.files[0].size / 1024).toFixed(1) + ' KB selected</span>';
-    } else {
-      zone.classList.remove('has-file');
-      label.innerHTML = '<strong>Choose a WAV file</strong> or drag it here<span class="hint" style="display:block;font-size:12px;color:#5e5e5e;margin-top:6px">Supports 16 kHz mono WAV · Automatically resampled if needed</span>';
-    }
-  });
-})();
-</script>
-
-</div>
-</body>
+    </body>
 </html>

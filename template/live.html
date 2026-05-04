@@ -1,9 +1,20 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Smart VAD — Live</title>
+        <script>
+            (function () {
+                var t = localStorage.getItem("vad_theme");
+                if (!t)
+                    t = window.matchMedia("(prefers-color-scheme:light)")
+                        .matches
+                        ? "light"
+                        : "dark";
+                document.documentElement.setAttribute("data-theme", t);
+            })();
+        </script>
         <style>
             *,
             *::before,
@@ -34,6 +45,40 @@
                     sans-serif;
                 --radius: 2px;
                 --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+            }
+            [data-theme="light"] {
+                --bg: #f5f5f5;
+                --surface: #ffffff;
+                --card: #e8e8e8;
+                --card-hover: #dcdcdc;
+                --fg: #111111;
+                --muted: #666666;
+                --dim: #999999;
+                --border: #d0d0d0;
+                --accent: #6aad00;
+                --accent-hover: #5c9900;
+                --danger: #c41e1e;
+                --danger-bg: #fce8e8;
+                --warn: #b8860b;
+                --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+            }
+            @media (prefers-color-scheme: light) {
+                html:not([data-theme="dark"]):not([data-theme="light"]) {
+                    --bg: #f5f5f5;
+                    --surface: #ffffff;
+                    --card: #e8e8e8;
+                    --card-hover: #dcdcdc;
+                    --fg: #111111;
+                    --muted: #666666;
+                    --dim: #999999;
+                    --border: #d0d0d0;
+                    --accent: #6aad00;
+                    --accent-hover: #5c9900;
+                    --danger: #c41e1e;
+                    --danger-bg: #fce8e8;
+                    --warn: #b8860b;
+                    --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+                }
             }
             body {
                 font-family: var(--font-body);
@@ -107,6 +152,30 @@
                 background: var(--card);
             }
             .nav-links a.active {
+                color: var(--accent);
+                background: rgba(118, 185, 0, 0.1);
+            }
+            .theme-toggle {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--muted);
+                text-decoration: none;
+                padding: 6px 14px;
+                border-radius: var(--radius);
+                transition: all 0.15s;
+                background: transparent;
+                border: none;
+                cursor: pointer;
+                font-family: var(--font-body);
+            }
+            .theme-toggle:hover {
+                color: var(--fg);
+                background: var(--card);
+            }
+            .theme-toggle.active {
                 color: var(--accent);
                 background: rgba(118, 185, 0, 0.1);
             }
@@ -512,6 +581,7 @@
                 <nav class="nav-links">
                     <a href="/">Analyze</a>
                     <a href="/live" class="active">Live</a>
+                    <button class="theme-toggle" id="themeToggle">Light</button>
                 </nav>
             </div>
         </header>
@@ -1143,6 +1213,38 @@
                 clearTimeout(rt);
                 rt = setTimeout(redrawChart, 200);
             });
+        </script>
+
+        <script>
+            (function () {
+                var btn = document.getElementById("themeToggle");
+                if (!btn) return;
+                var html = document.documentElement;
+                function setLabel() {
+                    var isDark = html.getAttribute("data-theme") === "dark";
+                    btn.innerHTML = isDark
+                        ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg> Light'
+                        : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> Dark';
+                }
+                setLabel();
+                btn.addEventListener("click", function () {
+                    var cur = html.getAttribute("data-theme");
+                    var next = cur === "dark" ? "light" : "dark";
+                    html.setAttribute("data-theme", next);
+                    localStorage.setItem("vad_theme", next);
+                    setLabel();
+                    if (typeof redrawChart === "function") redrawChart();
+                });
+                var mq = window.matchMedia("(prefers-color-scheme:light)");
+                mq.addEventListener("change", function (e) {
+                    if (!localStorage.getItem("vad_theme")) {
+                        var next = e.matches ? "light" : "dark";
+                        html.setAttribute("data-theme", next);
+                        setLabel();
+                        if (typeof redrawChart === "function") redrawChart();
+                    }
+                });
+            })();
         </script>
     </body>
 </html>
