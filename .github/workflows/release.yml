@@ -20,7 +20,7 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
-            label: linux-x86_64
+            label: linux-amd64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
