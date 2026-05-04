@@ -39,7 +39,7 @@ jobs:
       - name: Install onnxruntime (Linux)
         if: runner.os == 'Linux'
         run: |
-          VERSION=1.17.1
+          VERSION=1.21.0
           curl -sLO https://github.com/microsoft/onnxruntime/releases/download/v$VERSION/onnxruntime-linux-x64-$VERSION.tgz
           tar xzf onnxruntime-linux-x64-$VERSION.tgz
           echo "CGO_CFLAGS=-I$PWD/onnxruntime-linux-x64-$VERSION/include" >> $GITHUB_ENV

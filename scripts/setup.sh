@@ -63,7 +63,7 @@ install_onnxruntime_macos() {
 }
 
 install_onnxruntime_linux() {
-    VERSION="1.17.1"
+    VERSION="1.21.0"
     TMPDIR=$(mktemp -d)
     cd "$TMPDIR"
     info "Downloading onnxruntime v$VERSION for Linux..."
@@ -117,7 +117,7 @@ print_manual_onnxruntime_macos() {
 
 print_manual_onnxruntime_linux() {
     echo "  Option 1 — Download onnxruntime release:"
-    echo "    VERSION=1.17.1"
+    echo "    VERSION=1.21.0"
     echo "    curl -sLO https://github.com/microsoft/onnxruntime/releases/download/v\$VERSION/onnxruntime-linux-x64-\$VERSION.tgz"
     echo "    tar xzf onnxruntime-linux-x64-\$VERSION.tgz"
     echo "    sudo cp -r onnxruntime-linux-x64-\$VERSION/lib/* /usr/local/lib/"
