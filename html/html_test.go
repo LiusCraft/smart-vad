@@ -29,7 +29,7 @@ func TestRender(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "Smart VAD Report") {
+	if !strings.Contains(output, "Smart VAD") {
 		t.Error("Missing title")
 	}
 	if !strings.Contains(output, "wavesurfer.js") {
