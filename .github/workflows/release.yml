@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            label: darwin-arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            label: darwin-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            label: linux-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install onnxruntime (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install onnxruntime
+          echo "CGO_CFLAGS=-I$(brew --prefix)/include/onnxruntime" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$(brew --prefix)/lib" >> $GITHUB_ENV
+
+      - name: Install onnxruntime (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION=1.17.1
+          curl -sLO https://github.com/microsoft/onnxruntime/releases/download/v$VERSION/onnxruntime-linux-x64-$VERSION.tgz
+          tar xzf onnxruntime-linux-x64-$VERSION.tgz
+          echo "CGO_CFLAGS=-I$PWD/onnxruntime-linux-x64-$VERSION/include" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$PWD/onnxruntime-linux-x64-$VERSION/lib" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-$VERSION/lib" >> $GITHUB_ENV
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o smart-vad-server-${{ matrix.label }} ./cmd/server
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o smart-vad-demo-${{ matrix.label }} ./cmd/demo
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-vad-${{ matrix.label }}
+          path: |
+            smart-vad-server-${{ matrix.label }}
+            smart-vad-demo-${{ matrix.label }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: smart-vad-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            smart-vad-server-*
+            smart-vad-demo-*
+          generate_release_notes: true
