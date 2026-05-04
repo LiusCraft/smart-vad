@@ -37,7 +37,28 @@ func main() {
 	modelPath = *model
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-		log.Fatalf("model not found: %s", modelPath)
+		fmt.Fprintf(os.Stderr, `Error: model file not found: %s
+
+The server needs the Silero VAD model (silero_vad.onnx) to run.
+
+How to resolve:
+
+  1. Run the setup script (recommended):
+     ./scripts/setup.sh
+
+  2. Or install manually:
+     Download the model from the official Silero VAD repo:
+       curl -LO https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx
+
+     Or via Python:
+       pip install silero-vad
+       cp $(python3 -c "import silero_vad, os; print(os.path.join(os.path.dirname(silero_vad.__file__),'data','silero_vad.onnx'))") .
+
+  3. Use -model flag to point to an existing model file:
+     ./server -model /path/to/silero_vad.onnx
+
+`, modelPath)
+		os.Exit(1)
 	}
 
 	mux := http.NewServeMux()

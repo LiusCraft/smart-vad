@@ -1,17 +1,16 @@
-CGO_FLAGS := CGO_CFLAGS="-I/opt/homebrew/include/onnxruntime" CGO_LDFLAGS="-L/opt/homebrew/lib"
+UNAME := $(shell uname -s)
+
+ifeq ($(UNAME),Darwin)
+BREW_PREFIX := $(shell brew --prefix)
+CGO_FLAGS := CGO_CFLAGS="-I$(BREW_PREFIX)/include/onnxruntime" CGO_LDFLAGS="-L$(BREW_PREFIX)/lib"
+endif
+
 GO := $(CGO_FLAGS) go
 
-.PHONY: all init build build-server build-demo run-server run-demo test clean
+.PHONY: all setup build build-server build-demo run-server run-demo test clean
 
-PYTHON ?= python3
-
-init:
-	brew install onnxruntime
-	$(PYTHON) -m pip install silero-vad
-	@echo "=== silero-vad version ==="
-	$(PYTHON) -m pip show silero-vad | grep -E "^(Name|Version):"
-	cp $$($(PYTHON) -c "import silero_vad; import os; print(os.path.join(os.path.dirname(silero_vad.__file__),'data','silero_vad.onnx'))") .
-	@echo "=== done ==="
+setup:
+	@bash scripts/setup.sh
 
 all: build
 
