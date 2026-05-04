@@ -1,8 +1,11 @@
 package vad
 
 import (
+	"fmt"
 	"math"
 	"sort"
+
+	"github.com/liushunshun/smart-vad/logger"
 )
 
 func RMS(pcm []float32) float64 {
@@ -31,6 +34,12 @@ func FilterSegments(pcm []float32, segments []Segment, sampleRate int, minDB flo
 		db := RMS(pcm[startSample:endSample])
 		if db >= minDB {
 			filtered = append(filtered, seg)
+		} else {
+			logger.Debug("RMS filter: segment removed",
+				"start", seg.Start,
+				"end", seg.End,
+				"rms_db", db,
+				"min_db", minDB)
 		}
 	}
 	return filtered
@@ -116,6 +125,17 @@ func NewAdaptiveDetector(cfg AdaptiveConfig) (*AdaptiveDetector, error) {
 	framesPerSec := float64(cfg.DetectorConfig.SampleRate) / float64(ws)
 	capacity := int(cfg.WindowDuration * framesPerSec)
 
+	logger.Debug("adaptive detector created",
+		"sample_rate", cfg.DetectorConfig.SampleRate,
+		"window_duration_sec", cfg.WindowDuration,
+		"frame_capacity", capacity,
+		"frame_size", ws,
+		"noise_floor_frac", cfg.NoiseFloorFrac,
+		"energy_offset_db", cfg.EnergyOffsetDB,
+		"threshold_range", fmt.Sprintf("[%.2f, %.2f]", cfg.AdaptThresholdMin, cfg.AdaptThresholdMax),
+		"min_speech_range", fmt.Sprintf("[%d, %d]", cfg.AdaptMinSpeechMin, cfg.AdaptMinSpeechMax),
+		"disable_rms_filter", cfg.DisableRMSPostFilter)
+
 	return &AdaptiveDetector{
 		inner:      inner,
 		cfg:        cfg,
@@ -191,6 +211,12 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 	a.energyOffsetDB = a.cfg.EnergyOffsetDB
 	threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
 
+	logger.Debug("adaptive detect",
+		"baseline_db", baseline,
+		"mapped_threshold", threshold,
+		"mapped_min_speech_ms", minSpeechMs,
+		"frames_collected", len(a.frameDB))
+
 	a.inner.SetThreshold(threshold)
 	a.inner.SetMinSpeechDurationMs(minSpeechMs)
 	a.inner.SetMinSilenceDurationMs(minSilenceMs)
@@ -205,7 +231,15 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 		copy(a.rawSegments, result.Segments)
 
 		minDB := baseline + a.cfg.EnergyOffsetDB
+		before := len(result.Segments)
 		result.Segments = FilterSegments(pcm, result.Segments, a.sampleRate, minDB)
+		removed := before - len(result.Segments)
+		if removed > 0 {
+			logger.Debug("RMS post-filter removed segments",
+				"removed", removed,
+				"remaining", len(result.Segments),
+				"min_db", minDB)
+		}
 
 		a.keptSegments = make([]Segment, len(result.Segments))
 		copy(a.keptSegments, result.Segments)
@@ -244,6 +278,10 @@ func (a *AdaptiveDetector) Process(chunk []float32) error {
 	if math.Abs(baseline-a.baselineDB) >= 3 {
 		a.baselineDB = baseline
 		threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
+		logger.Debug("adaptive params updated",
+			"baseline_db", baseline,
+			"threshold", threshold,
+			"min_speech_ms", minSpeechMs)
 		a.inner.SetThreshold(threshold)
 		a.inner.SetMinSpeechDurationMs(minSpeechMs)
 		a.inner.SetMinSilenceDurationMs(minSilenceMs)

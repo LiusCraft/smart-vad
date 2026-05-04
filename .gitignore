@@ -5,6 +5,7 @@
 *.so
 *.dylib
 /server
+/cli
 /cmd/server/server
 /cmd/demo/demo
 

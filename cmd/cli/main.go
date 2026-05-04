@@ -3,13 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/go-audio/wav"
 	"github.com/liushunshun/smart-vad/cmd/internal/check"
 	"github.com/liushunshun/smart-vad/html"
+	"github.com/liushunshun/smart-vad/logger"
 	"github.com/liushunshun/smart-vad/slice"
 	"github.com/liushunshun/smart-vad/vad"
 )
@@ -24,7 +24,10 @@ func main() {
 	padMs := flag.Int("pad", 30, "padding around segments in ms")
 	targetSR := flag.Int("samplerate", 16000, "target sample rate (16000 or 8000)")
 	adaptive := flag.Bool("adaptive", false, "enable adaptive VAD (dynamic baseline threshold)")
+	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
+
+	logger.Init(*debug)
 
 	if *input == "" || *model == "" {
 		flag.Usage()
@@ -35,45 +38,48 @@ func main() {
 
 	f, err := os.Open(*input)
 	if err != nil {
-		log.Fatalf("open input: %v", err)
+		logger.Fatal("open input failed", "error", err)
 	}
 	defer f.Close()
 
 	dec := wav.NewDecoder(f)
 	if !dec.IsValidFile() {
-		log.Fatalf("invalid WAV file")
+		logger.Fatal("invalid WAV file")
 	}
 
 	buf, err := dec.FullPCMBuffer()
 	if err != nil {
-		log.Fatalf("read PCM: %v", err)
+		logger.Fatal("read PCM failed", "error", err)
 	}
 
 	pcm := buf.AsFloat32Buffer().Data
 	sampleRate := int(dec.SampleRate)
 
 	if *targetSR != 16000 && *targetSR != 8000 {
-		log.Fatalf("unsupported target sample rate: %d (use 8000 or 16000)", *targetSR)
+		logger.Fatal("unsupported target sample rate", "rate", *targetSR)
 	}
 
 	if sampleRate != *targetSR {
-		log.Printf("Resampling from %d Hz to %d Hz", sampleRate, *targetSR)
+		logger.Info("resampling audio", "from", sampleRate, "to", *targetSR)
 		pcm = slice.Resample(pcm, sampleRate, *targetSR)
 		sampleRate = *targetSR
 	}
 
 	if sampleRate != 16000 && sampleRate != 8000 {
-		log.Fatalf("unsupported sample rate: %d (use 8000 or 16000)", sampleRate)
+		logger.Fatal("unsupported sample rate", "rate", sampleRate)
 	}
 
-	log.Printf("Loaded: %s (%d Hz, %d samples, %.2fs)",
-		*input, sampleRate, len(pcm), float64(len(pcm))/float64(sampleRate))
+	logger.Info("loaded input",
+		"path", *input,
+		"rate", sampleRate,
+		"samples", len(pcm),
+		"duration_sec", float64(len(pcm))/float64(sampleRate))
 
 	var result vad.Result
 	var filteredSegments []vad.Segment
 
 	if *adaptive {
-		log.Print("Adaptive VAD enabled")
+		logger.Info("adaptive VAD enabled")
 		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
 				ModelPath:            *model,
@@ -85,15 +91,19 @@ func main() {
 			},
 		})
 		if err != nil {
-			log.Fatalf("create adaptive detector: %v", err)
+			logger.Fatal("create adaptive detector failed", "error", err)
 		}
 		defer adaptDetector.Destroy()
 
 		result, err = adaptDetector.Detect(pcm)
 		if err != nil {
-			log.Fatalf("detect: %v", err)
+			logger.Fatal("detection failed", "error", err)
 		}
 		filteredSegments = adaptDetector.FilteredSegments()
+		logger.Debug("adaptive VAD params",
+			"baseline_db", adaptDetector.BaselineDB(),
+			"energy_offset_db", adaptDetector.EnergyOffsetDB(),
+			"threshold", adaptDetector.Inner().GetThreshold())
 	} else {
 		detector, err := vad.NewDetector(vad.Config{
 			ModelPath:            *model,
@@ -104,23 +114,28 @@ func main() {
 			SpeechPadMs:          *padMs,
 		})
 		if err != nil {
-			log.Fatalf("create detector: %v", err)
+			logger.Fatal("create detector failed", "error", err)
 		}
 		defer detector.Destroy()
 
 		result, err = detector.Detect(pcm)
 		if err != nil {
-			log.Fatalf("detect: %v", err)
+			logger.Fatal("detection failed", "error", err)
 		}
 	}
 
-	log.Printf("Detected %d speech segments", len(result.Segments))
+	logger.Info("detected speech segments",
+		"count", len(result.Segments),
+		"filtered", len(filteredSegments))
 	for _, s := range result.Segments {
-		log.Printf("  segment: %.2fs - %.2fs (%.2fs)", s.Start, s.End, s.End-s.Start)
+		logger.Debug("segment",
+			"start", s.Start,
+			"end", s.End,
+			"duration", s.End-s.Start)
 	}
 
 	if len(result.Segments) == 0 {
-		log.Println("No speech detected, generating report without segments")
+		logger.Warn("no speech detected, generating report without segments")
 	}
 
 	starts := make([]float64, len(result.Segments))
@@ -134,17 +149,17 @@ func main() {
 	outDir := *output
 	segDir := filepath.Join(outDir, "segments")
 	if err := os.MkdirAll(segDir, 0755); err != nil {
-		log.Fatalf("create output dir: %v", err)
+		logger.Fatal("create output dir failed", "error", err)
 	}
 
 	segFiles := make([]string, len(segPCMs))
 	for i, seg := range segPCMs {
 		filename := filepath.Join(segDir, fmt.Sprintf("seg-%03d.wav", i+1))
 		if err := slice.WriteWAV(filename, seg, sampleRate); err != nil {
-			log.Fatalf("write segment %d: %v", i+1, err)
+			logger.Fatal("write segment failed", "index", i+1, "error", err)
 		}
 		segFiles[i] = filename
-		log.Printf("  wrote: %s", filename)
+		logger.Debug("wrote segment file", "path", filename)
 	}
 
 	var filteredPCMs [][]float32
@@ -161,7 +176,7 @@ func main() {
 	reportPath := filepath.Join(outDir, "report.html")
 	rf, err := os.Create(reportPath)
 	if err != nil {
-		log.Fatalf("create report: %v", err)
+		logger.Fatal("create report file failed", "error", err)
 	}
 	defer rf.Close()
 
@@ -187,8 +202,8 @@ func main() {
 		SegmentPCM:         segPCMs,
 		FilteredSegmentPCM: filteredPCMs,
 	}, rf); err != nil {
-		log.Fatalf("render report: %v", err)
+		logger.Fatal("render report failed", "error", err)
 	}
 
-	log.Printf("Report: %s", reportPath)
+	logger.Info("report generated", "path", reportPath)
 }

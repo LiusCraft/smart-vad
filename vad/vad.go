@@ -3,6 +3,7 @@ package vad
 import (
 	"fmt"
 
+	"github.com/liushunshun/smart-vad/logger"
 	"github.com/streamer45/silero-vad-go/speech"
 )
 
@@ -91,6 +92,14 @@ func NewDetector(cfg Config) (*Detector, error) {
 		return nil, fmt.Errorf("failed to create speech detector: %w", err)
 	}
 
+	logger.Debug("detector created",
+		"sample_rate", cfg.SampleRate,
+		"threshold", cfg.Threshold,
+		"min_silence_ms", cfg.MinSilenceDurationMs,
+		"min_speech_ms", cfg.MinSpeechDurationMs,
+		"speech_pad_ms", cfg.SpeechPadMs,
+		"window_size", cfg.windowSize())
+
 	return &Detector{
 		inner:        inner,
 		cfg:          cfg,
@@ -114,6 +123,8 @@ func (d *Detector) Process(chunk []float32) error {
 	if len(chunk) < ws {
 		return fmt.Errorf("chunk too short: need at least %d samples", ws)
 	}
+
+	logger.Debug("process chunk", "samples", len(chunk), "window_size", ws, "threshold", d.threshold)
 
 	minSilenceSamples := d.minSilenceMs * d.cfg.SampleRate / 1000
 	speechPadSamples := d.cfg.SpeechPadMs * d.cfg.SampleRate / 1000
@@ -163,6 +174,7 @@ func (d *Detector) Flush() Result {
 	if d.triggered && len(d.segments) > 0 {
 		end := float64(d.currSample) / float64(d.cfg.SampleRate)
 		d.segments[len(d.segments)-1].End = end
+		logger.Debug("flush: closed open segment", "end", end)
 	}
 
 	segments := d.segments
@@ -174,9 +186,14 @@ func (d *Detector) Flush() Result {
 				filtered = append(filtered, s)
 			}
 		}
+		removed := len(segments) - len(filtered)
+		if removed > 0 {
+			logger.Debug("flush: removed short segments", "removed", removed, "min_speech_ms", d.minSpeechMs)
+		}
 		segments = filtered
 	}
 
+	logger.Debug("flush result", "segments", len(segments), "probs", len(d.probs), "curr_sample", d.currSample)
 	probs := d.probs
 	return Result{Segments: segments, Probs: probs}
 }
@@ -187,6 +204,7 @@ func (d *Detector) Detect(pcm []float32) (Result, error) {
 		return Result{}, fmt.Errorf("audio too short: need at least %d samples", ws)
 	}
 
+	logger.Debug("detect start", "samples", len(pcm), "total_sec", float64(len(pcm))/float64(d.cfg.SampleRate))
 	d.Reset()
 
 	if err := d.Process(pcm); err != nil {
@@ -204,6 +222,7 @@ func (d *Detector) Destroy() error {
 // Invalid values (<= 0 or >= 1) are silently ignored.
 func (d *Detector) SetThreshold(t float32) {
 	if t > 0 && t < 1 {
+		logger.Debug("threshold updated", "old", d.threshold, "new", t)
 		d.threshold = t
 	}
 }
@@ -212,6 +231,7 @@ func (d *Detector) SetThreshold(t float32) {
 // Negative values are silently ignored.
 func (d *Detector) SetMinSilenceDurationMs(ms int) {
 	if ms >= 0 {
+		logger.Debug("min_silence updated", "old", d.minSilenceMs, "new", ms)
 		d.minSilenceMs = ms
 	}
 }
@@ -220,6 +240,7 @@ func (d *Detector) SetMinSilenceDurationMs(ms int) {
 // Negative values are silently ignored.
 func (d *Detector) SetMinSpeechDurationMs(ms int) {
 	if ms >= 0 {
+		logger.Debug("min_speech updated", "old", d.minSpeechMs, "new", ms)
 		d.minSpeechMs = ms
 	}
 }

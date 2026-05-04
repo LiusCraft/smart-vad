@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net"
 	"net/http"
@@ -16,11 +15,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/go-audio/wav"
 	"github.com/gorilla/websocket"
 	"github.com/liushunshun/smart-vad/cmd/internal/check"
 	"github.com/liushunshun/smart-vad/html"
+	"github.com/liushunshun/smart-vad/logger"
 	"github.com/liushunshun/smart-vad/slice"
 	"github.com/liushunshun/smart-vad/template"
 	"github.com/liushunshun/smart-vad/vad"
@@ -35,8 +36,11 @@ var upgrader = websocket.Upgrader{
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	model := flag.String("model", "silero_vad.onnx", "path to silero_vad.onnx")
+	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
 	modelPath = *model
+
+	logger.Init(*debug)
 
 	check.ModelExists(modelPath)
 
@@ -48,12 +52,12 @@ func main() {
 
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
-		log.Fatalf("listen on %s: %v", *addr, err)
+		logger.Fatal("listen failed", "addr", *addr, "error", err)
 	}
 	*addr = listener.Addr().String()
 
-	log.Printf("Starting server on %s", *addr)
-	log.Fatal(http.Serve(listener, mux))
+	logger.Info("server started", "addr", *addr)
+	logger.Fatal("server stopped", "error", http.Serve(listener, mux))
 }
 
 func readCookieBool(r *http.Request, name string) bool {
@@ -85,6 +89,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		AdaptiveChecked:   adaptiveChecked,
 		DisableRMSChecked: disableRMSChecked,
 	}, &buf); err != nil {
+		logger.Error("render index failed", "error", err)
 		http.Error(w, "render failed", 500)
 		return
 	}
@@ -113,12 +118,19 @@ type wsSession struct {
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("websocket connection request",
+		"remote", r.RemoteAddr,
+		"adaptive", r.URL.Query().Get("adaptive"))
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws upgrade: %v", err)
+		logger.Warn("websocket upgrade failed", "error", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		logger.Debug("websocket connection closed", "remote", r.RemoteAddr)
+		conn.Close()
+	}()
 
 	session := &wsSession{conn: conn}
 
@@ -137,9 +149,12 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			DisableRMSPostFilter: disableRMS,
 		})
 		if err != nil {
+			logger.Error("create adaptive detector failed", "error", err)
 			conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
 			return
 		}
+		logger.Debug("adaptive detector created",
+			"disable_rms", disableRMS)
 		session.adaptDetector = ad
 		session.detector = ad.Inner()
 		defer ad.Destroy()
@@ -153,9 +168,11 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			SpeechPadMs:          30,
 		})
 		if err != nil {
+			logger.Error("create detector failed", "error", err)
 			conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
 			return
 		}
+		logger.Debug("detector created")
 		session.detector = d
 		defer session.detector.Destroy()
 	}
@@ -174,18 +191,24 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	msgCount := 0
 	for {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
+			logger.Debug("websocket read closed", "messages_processed", msgCount)
 			break
 		}
+
+		msgCount++
 
 		if mt == websocket.TextMessage {
 			var msg map[string]interface{}
 			if err := json.Unmarshal(data, &msg); err != nil {
 				continue
 			}
-			switch msg["type"] {
+			msgType, _ := msg["type"].(string)
+			logger.Debug("websocket text message", "type", msgType)
+			switch msgType {
 			case "flush":
 				session.flush()
 				return
@@ -197,6 +220,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 
 		if mt == websocket.BinaryMessage {
 			pcm := bytesToFloat32(data)
+			logger.Debug("websocket binary chunk", "samples", len(pcm))
 			session.processChunk(pcm)
 		}
 	}
@@ -226,17 +250,21 @@ func (s *wsSession) processChunk(pcm []float32) {
 		prevLastEnd = prevSegs[prevSegLen-1].End
 	}
 
+	start := time.Now()
 	if s.adaptDetector != nil {
 		if err := s.adaptDetector.Process(pcm); err != nil {
 			s.conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
+			logger.Error("adaptive process chunk failed", "error", err)
 			return
 		}
 	} else {
 		if err := s.detector.Process(pcm); err != nil {
 			s.conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
+			logger.Error("process chunk failed", "error", err)
 			return
 		}
 	}
+	logger.Debug("chunk processed", "samples", len(pcm), "duration_us", time.Since(start).Microseconds())
 
 	// Accumulate PCM for potential flush
 	s.pcmBuf = append(s.pcmBuf, pcm...)
@@ -269,6 +297,10 @@ func (s *wsSession) processChunk(pcm []float32) {
 			wav := pcmToWAVBytes(segPCM, 16000)
 			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
 		}
+		logger.Debug("segment ended",
+			"start", closed.Start,
+			"end", closed.End,
+			"rms_db", rms)
 		s.conn.WriteJSON(map[string]interface{}{
 			"type":  "segment_end",
 			"start": closed.Start,
@@ -280,6 +312,7 @@ func (s *wsSession) processChunk(pcm []float32) {
 
 	// Detect new segment starts
 	for i := prevSegLen; i < len(curSegs); i++ {
+		logger.Debug("segment started", "start", curSegs[i].Start)
 		s.conn.WriteJSON(map[string]interface{}{
 			"type":  "segment_start",
 			"start": curSegs[i].Start,
@@ -290,6 +323,7 @@ func (s *wsSession) processChunk(pcm []float32) {
 	curTriggered := s.detector.IsTriggered()
 	if curTriggered != s.triggered {
 		s.triggered = curTriggered
+		logger.Debug("vad state changed", "triggered", curTriggered)
 		s.conn.WriteJSON(map[string]interface{}{
 			"type":      "state",
 			"triggered": curTriggered,
@@ -321,11 +355,15 @@ func (s *wsSession) flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	logger.Debug("flush called", "buffered_samples", len(s.pcmBuf))
+
 	// Check for open segment before flush
 	preSegs := s.detector.GetSegments()
 	hadOpen := len(preSegs) > 0 && preSegs[len(preSegs)-1].End == 0
 
 	result := s.detector.Flush()
+
+	logger.Info("flush result", "segments", len(result.Segments))
 
 	// Send segment_end for the segment that was just closed by Flush()
 	if hadOpen && len(result.Segments) > 0 {
@@ -395,6 +433,8 @@ func (s *wsSession) flush() {
 func (s *wsSession) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	logger.Debug("session reset",
+		"buffered_samples", len(s.pcmBuf))
 	s.detector.Reset()
 	s.pcmBuf = s.pcmBuf[:0]
 	s.triggered = false
@@ -429,7 +469,7 @@ func pcmToWAVBytes(pcm []float32, sampleRate int) []byte {
 func put16(buf []byte, v uint16) { binary.LittleEndian.PutUint16(buf, v) }
 func put32(buf []byte, v uint32) { binary.LittleEndian.PutUint32(buf, v) }
 
-// ---- Analyze handler (unchanged from original) ----
+// ---- Analyze handler ----
 
 func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -437,8 +477,11 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Debug("analyze request", "remote", r.RemoteAddr)
+
 	file, _, err := r.FormFile("audio")
 	if err != nil {
+		logger.Warn("analyze: missing audio file", "error", err)
 		http.Error(w, "missing audio file", 400)
 		return
 	}
@@ -446,6 +489,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	tmpDir, err := os.MkdirTemp("", "smart-vad-*")
 	if err != nil {
+		logger.Error("create temp dir failed", "error", err)
 		http.Error(w, "temp dir failed", 500)
 		return
 	}
@@ -454,11 +498,13 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	tmpFile := filepath.Join(tmpDir, "input.wav")
 	f, err := os.Create(tmpFile)
 	if err != nil {
+		logger.Error("create temp file failed", "error", err)
 		http.Error(w, "create temp failed", 500)
 		return
 	}
 	if _, err := io.Copy(f, file); err != nil {
 		f.Close()
+		logger.Error("write temp file failed", "error", err)
 		http.Error(w, "write temp failed", 500)
 		return
 	}
@@ -466,6 +512,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	af, err := os.Open(tmpFile)
 	if err != nil {
+		logger.Error("open temp file failed", "error", err)
 		http.Error(w, "open temp failed", 500)
 		return
 	}
@@ -495,7 +542,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if targetSR != 0 && sr != targetSR {
-		log.Printf("Resampling from %d Hz to %d Hz", sr, targetSR)
+		logger.Info("resampling audio", "from", sr, "to", targetSR)
 		pcm = slice.Resample(pcm, sr, targetSR)
 		sr = targetSR
 	}
@@ -510,10 +557,17 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	setCookieBool(w, "adaptive", adaptiveOn)
 	setCookieBool(w, "disable_rms", disableRMS)
 
+	logger.Debug("analyze params",
+		"sample_rate", sr,
+		"samples", len(pcm),
+		"adaptive", adaptiveOn,
+		"disable_rms", disableRMS)
+
 	var result vad.Result
 	var filteredSegments []vad.Segment
 	var adaptDetector *vad.AdaptiveDetector
 
+	start := time.Now()
 	if adaptiveOn {
 		adaptDetector, err = vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
@@ -527,6 +581,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			DisableRMSPostFilter: disableRMS,
 		})
 		if err != nil {
+			logger.Error("create adaptive detector failed", "error", err)
 			http.Error(w, fmt.Sprintf("adaptive detector: %v", err), 500)
 			return
 		}
@@ -534,10 +589,14 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 		result, err = adaptDetector.Detect(pcm)
 		if err != nil {
+			logger.Error("detection failed", "error", err)
 			http.Error(w, fmt.Sprintf("detect: %v", err), 500)
 			return
 		}
 		filteredSegments = adaptDetector.FilteredSegments()
+		logger.Debug("adaptive VAD params",
+			"baseline_db", adaptDetector.BaselineDB(),
+			"energy_offset_db", adaptDetector.EnergyOffsetDB())
 	} else {
 		detector, err := vad.NewDetector(vad.Config{
 			ModelPath:            modelPath,
@@ -548,6 +607,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			SpeechPadMs:          30,
 		})
 		if err != nil {
+			logger.Error("create detector failed", "error", err)
 			http.Error(w, fmt.Sprintf("detector: %v", err), 500)
 			return
 		}
@@ -555,10 +615,16 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 		result, err = detector.Detect(pcm)
 		if err != nil {
+			logger.Error("detection failed", "error", err)
 			http.Error(w, fmt.Sprintf("detect: %v", err), 500)
 			return
 		}
 	}
+
+	logger.Info("analyze detection done",
+		"segments", len(result.Segments),
+		"filtered", len(filteredSegments),
+		"duration_ms", time.Since(start).Milliseconds())
 
 	starts := make([]float64, len(result.Segments))
 	ends := make([]float64, len(result.Segments))
@@ -631,6 +697,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		BaselineDB:         baselineDB,
 		EnergyOffsetDB:     energyOffsetDB,
 	}, &reportBuf); err != nil {
+		logger.Error("render report failed", "error", err)
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)
 		return
 	}
