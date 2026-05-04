@@ -17,14 +17,10 @@ jobs:
             goos: darwin
             goarch: arm64
             label: darwin-arm64
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            label: darwin-amd64
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
-            label: linux-amd64
+            label: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
