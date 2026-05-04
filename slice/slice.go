@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+
+	"github.com/liushunshun/smart-vad/logger"
 )
 
 func Split(pcm []float32, starts, ends []float64, sampleRate int) [][]float32 {
@@ -13,12 +15,15 @@ func Split(pcm []float32, starts, ends []float64, sampleRate int) [][]float32 {
 		startSample := int(math.Round(starts[i] * float64(sampleRate)))
 		endSample := int(math.Round(ends[i] * float64(sampleRate)))
 		if startSample < 0 {
+			logger.Debug("segment start clamped", "index", i, "original", starts[i], "clamped", 0)
 			startSample = 0
 		}
 		if endSample > len(pcm) {
+			logger.Debug("segment end clamped", "index", i, "original", ends[i], "clamped", float64(len(pcm))/float64(sampleRate))
 			endSample = len(pcm)
 		}
 		if startSample >= endSample {
+			logger.Debug("segment skipped: start >= end", "index", i, "start", starts[i], "end", ends[i])
 			continue
 		}
 		seg := make([]float32, endSample-startSample)
@@ -29,6 +34,8 @@ func Split(pcm []float32, starts, ends []float64, sampleRate int) [][]float32 {
 }
 
 func WriteWAV(filename string, pcm []float32, sampleRate int) error {
+	logger.Debug("writing WAV", "path", filename, "samples", len(pcm), "rate", sampleRate)
+
 	if err := os.MkdirAll(dirname(filename), 0755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -83,6 +90,7 @@ func Resample(pcm []float32, srcRate, dstRate int) []float32 {
 	}
 	ratio := float64(srcRate) / float64(dstRate)
 	outLen := int(math.Round(float64(len(pcm)) / ratio))
+	logger.Debug("resampling", "from", srcRate, "to", dstRate, "in_samples", len(pcm), "out_samples", outLen)
 	out := make([]float32, outLen)
 	for i := 0; i < outLen; i++ {
 		srcIdx := float64(i) * ratio
