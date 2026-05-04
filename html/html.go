@@ -25,6 +25,8 @@ type ReportData struct {
 	BackURL            string
 	HasResults         bool
 	AdaptiveVAD        bool
+	AdaptiveChecked    bool
+	DisableRMSChecked  bool
 	BaselineDB         float64
 	EnergyOffsetDB     float64
 }
@@ -54,6 +56,8 @@ type reportTmplData struct {
 	SegmentFilesJSON          template.JS
 	FilteredCount             int
 	AdaptiveVAD               bool
+	AdaptiveChecked           bool
+	DisableRMSChecked         bool
 	BaselineDB                float64
 	EnergyOffsetDB            float64
 }
@@ -93,6 +97,8 @@ func Render(data ReportData, w io.Writer) error {
 		tmplData.SegmentFilesJSON = template.JS(encodeStringArray(data.SegmentFiles))
 		tmplData.FilteredCount = len(data.FilteredSegments)
 		tmplData.AdaptiveVAD = data.AdaptiveVAD
+		tmplData.AdaptiveChecked = data.AdaptiveChecked
+		tmplData.DisableRMSChecked = data.DisableRMSChecked
 		tmplData.BaselineDB = data.BaselineDB
 		tmplData.EnergyOffsetDB = data.EnergyOffsetDB
 	}

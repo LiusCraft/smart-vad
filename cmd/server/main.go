@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/go-audio/wav"
@@ -49,13 +50,35 @@ func main() {
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
+func readCookieBool(r *http.Request, name string) bool {
+	c, err := r.Cookie(name)
+	if err != nil {
+		return false
+	}
+	v, err := strconv.ParseBool(c.Value)
+	return err == nil && v
+}
+
+func setCookieBool(w http.ResponseWriter, name string, val bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:   name,
+		Value:  strconv.FormatBool(val),
+		MaxAge: 86400 * 365,
+	})
+}
+
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
 	var buf bytes.Buffer
-	if err := html.Render(html.ReportData{}, &buf); err != nil {
+	adaptiveChecked := readCookieBool(r, "adaptive")
+	disableRMSChecked := readCookieBool(r, "disable_rms")
+	if err := html.Render(html.ReportData{
+		AdaptiveChecked:   adaptiveChecked,
+		DisableRMSChecked: disableRMSChecked,
+	}, &buf); err != nil {
 		http.Error(w, "render failed", 500)
 		return
 	}
@@ -94,6 +117,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	session := &wsSession{conn: conn}
 
 	adaptive := r.URL.Query().Get("adaptive") == "true"
+	disableRMS := r.URL.Query().Get("disable_rms") == "true"
 	if adaptive {
 		ad, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
@@ -104,6 +128,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
 			},
+			DisableRMSPostFilter: disableRMS,
 		})
 		if err != nil {
 			conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
@@ -231,14 +256,19 @@ func (s *wsSession) processChunk(pcm []float32) {
 		rms := 0.0
 		startSample := int(math.Round(closed.Start * 16000))
 		endSample := int(math.Round(closed.End * 16000))
+		var audioData string
 		if startSample >= 0 && endSample <= len(s.pcmBuf) && startSample < endSample {
-			rms = vad.RMS(s.pcmBuf[startSample:endSample])
+			segPCM := s.pcmBuf[startSample:endSample]
+			rms = vad.RMS(segPCM)
+			wav := pcmToWAVBytes(segPCM, 16000)
+			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
 		}
 		s.conn.WriteJSON(map[string]interface{}{
 			"type":  "segment_end",
 			"start": closed.Start,
 			"end":   closed.End,
 			"rms":   rms,
+			"audio": audioData,
 		})
 	}
 
@@ -297,14 +327,19 @@ func (s *wsSession) flush() {
 		rms := 0.0
 		startSample := int(math.Round(last.Start * 16000))
 		endSample := int(math.Round(last.End * 16000))
+		var audioData string
 		if startSample >= 0 && endSample <= len(s.pcmBuf) && startSample < endSample {
-			rms = vad.RMS(s.pcmBuf[startSample:endSample])
+			segPCM := s.pcmBuf[startSample:endSample]
+			rms = vad.RMS(segPCM)
+			wav := pcmToWAVBytes(segPCM, 16000)
+			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
 		}
 		s.conn.WriteJSON(map[string]interface{}{
 			"type":  "segment_end",
 			"start": last.Start,
 			"end":   last.End,
 			"rms":   rms,
+			"audio": audioData,
 		})
 	}
 
@@ -464,12 +499,16 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	adaptiveOn := r.FormValue("adaptive") == "true"
+	disableRMS := r.FormValue("disable_rms") == "true"
+	setCookieBool(w, "adaptive", adaptiveOn)
+	setCookieBool(w, "disable_rms", disableRMS)
+
 	var result vad.Result
 	var filteredSegments []vad.Segment
 	var adaptDetector *vad.AdaptiveDetector
 
-	if r.FormValue("adaptive") == "true" {
-		var err error
+	if adaptiveOn {
 		adaptDetector, err = vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
 				ModelPath:            modelPath,
@@ -479,6 +518,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
 			},
+			DisableRMSPostFilter: disableRMS,
 		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("adaptive detector: %v", err), 500)

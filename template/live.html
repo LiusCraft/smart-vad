@@ -32,16 +32,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .chart-wrap{width:100%;height:160px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
 .chart-wrap canvas{width:100%;height:100%;display:block}
 #vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
-.segments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+#vadTooltip{position:absolute;background:rgba(15,52,96,0.95);border:1px solid #4a9eff;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.6;pointer-events:none;display:none;z-index:10;white-space:nowrap;backdrop-filter:blur(4px);color:#ccc}
+#vadTooltip .tt-title{color:#4a9eff;font-weight:600;font-size:13px;margin-bottom:4px}
+#vadTooltip .tt-label{color:#888}
+.segments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
 .segment-card{background:#0f3460;border-radius:8px;padding:12px;font-size:13px;border-left:3px solid #2ecc71;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .segment-card .seg-header{display:flex;justify-content:space-between;margin-bottom:4px}
 .segment-card .seg-num{color:#4a9eff;font-weight:600}
 .segment-card .seg-time{color:#aaa}
 .segment-card .seg-dur{color:#888;font-size:12px}
+.segment-card audio{width:100%;margin-top:6px;height:36px}
 .adaptive-info{font-size:12px;color:#888;margin-top:8px;padding:8px 12px;background:#0f3460;border-radius:6px;display:none}
 .adaptive-info.show{display:block}
 .adaptive-info span{color:#e0e0e0}
+.stats-bar{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
+.stats-bar .stat{display:flex;flex-direction:column}
+.stats-bar .stat .val{font-size:20px;font-weight:600}
+.stats-bar .stat .lbl{font-size:11px;color:#666;margin-top:2px}
 .flush-section{display:none}
 .flush-section.show{display:block}
 .flush-section audio{width:100%;margin-top:8px}
@@ -78,9 +86,20 @@ Segments: <span id="segCount" style="color:#2ecc71">0</span>
   </select>
 </label>
 <label class="adaptive-label">
-<input type="checkbox" id="adaptiveCb" checked>
+<input type="checkbox" id="adaptiveCb">
 Adaptive VAD
 </label>
+<label class="adaptive-label">
+<input type="checkbox" id="rmsFilterCb">
+RMS Post-filter
+</label>
+</div>
+
+<div class="section">
+<div class="stats-bar" id="statsBar">
+<div class="stat"><span class="val" id="statDuration" style="color:#4a9eff">0:00</span><span class="lbl">Duration</span></div>
+<div class="stat"><span class="val" id="statSegments" style="color:#2ecc71">0</span><span class="lbl">Segments</span></div>
+<div class="stat"><span class="val" id="statSpeechRatio" style="color:#f1c40f">0%</span><span class="lbl">Speech Ratio</span></div>
 </div>
 
 <div class="section">
@@ -88,6 +107,7 @@ Adaptive VAD
 <div class="chart-wrap">
 <canvas id="vadCanvas"></canvas>
 <div id="vadCursor"></div>
+<div id="vadTooltip"></div>
 </div>
 <div class="adaptive-info" id="adaptiveInfo">
 Baseline: <span id="baselineDB">-</span> dB &middot;
@@ -110,6 +130,13 @@ Threshold: <span id="currentThreshold">0.50</span>
 <script>
 const SR = 16000;
 const CHART_DURATION = 60;
+
+function loadPref(key, def) { const v = localStorage.getItem('vad_' + key); return v !== null ? v === 'true' : def; }
+function savePref(key, val) { localStorage.setItem('vad_' + key, val); }
+
+document.getElementById('adaptiveCb').checked = loadPref('adaptive', true);
+document.getElementById('rmsFilterCb').checked = loadPref('rmsFilter', true);
+
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const resetBtn = document.getElementById('resetBtn');
@@ -142,7 +169,10 @@ function fmt(t) { const m = Math.floor(t/60), s = Math.floor(t%60); return m + '
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws?adaptive=' + adaptiveCb.checked);
+  const rmsEnabled = document.getElementById('rmsFilterCb').checked;
+  savePref('adaptive', adaptiveCb.checked);
+  savePref('rmsFilter', rmsEnabled);
+  ws = new WebSocket(proto + '//' + location.host + '/ws?adaptive=' + adaptiveCb.checked + '&disable_rms=' + !rmsEnabled);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => { console.log('WS connected'); setStatus('Connected'); };
   ws.onmessage = e => {
@@ -171,6 +201,7 @@ function handleMsg(msg) {
         if (segments[i].end === null) {
           segments[i].end = msg.end;
           segments[i].rms = msg.rms || 0;
+          segments[i].audio = msg.audio || '';
           segmentCounter++;
           addSegmentCard(segments[i], segmentCounter);
           break;
@@ -187,6 +218,7 @@ function handleMsg(msg) {
       currentTime = msg.time;
       timeDisplay.textContent = fmt(currentTime);
       updateCursor(currentTime);
+      updateStats();
       break;
     case 'adaptive_info':
       baselineDB.textContent = msg.baseline_db.toFixed(1);
@@ -283,10 +315,59 @@ function updateCursor(t) {
   vadCursor.style.display = (t > 0 && x >= pad.l && x <= W - pad.r) ? 'block' : 'none';
 }
 
+function updateStats() {
+  const completed = segments.filter(s => s.end !== null);
+  const totalSpeech = completed.reduce((sum, s) => sum + (s.end - s.start), 0);
+  const ratio = currentTime > 0 ? (totalSpeech / currentTime * 100) : 0;
+  document.getElementById('statDuration').textContent = fmt(currentTime);
+  document.getElementById('statSegments').textContent = completed.length;
+  document.getElementById('statSpeechRatio').textContent = ratio.toFixed(1) + '%';
+}
+
+function findSegmentAtTime(t) {
+  for (const seg of segments) {
+    if (seg.end === null) continue;
+    if (t >= seg.start && t <= seg.end) return seg;
+  }
+  return null;
+}
+
+function showSegmentTooltip(x, y, seg) {
+  const el = document.getElementById('vadTooltip');
+  const dur = (seg.end - seg.start).toFixed(2);
+  el.innerHTML = '<div class="tt-title">Segment</div><div><span class="tt-label">Time:</span> ' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's (' + dur + 's)</div><div><span class="tt-label">RMS:</span> ' + (seg.rms || 0).toFixed(1) + ' dB</div>';
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.style.display = 'block';
+}
+
+function hideSegmentTooltip() {
+  document.getElementById('vadTooltip').style.display = 'none';
+}
+
+// Chart hover tooltip
+(function() {
+  const wrap = document.querySelector('.chart-wrap');
+  wrap.addEventListener('mousemove', function(e) {
+    const rect = wrap.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const W = rect.width, pad = {l: 40, r: 16}, cw = W - pad.l - pad.r;
+    if (mx < pad.l || mx > W - pad.r) { hideSegmentTooltip(); return; }
+    const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
+    const viewDur = Math.min(Math.max(currentTime || 1, 1), CHART_DURATION);
+    const t = scrollOff + (mx - pad.l) / cw * viewDur;
+    const seg = findSegmentAtTime(t);
+    if (seg) { showSegmentTooltip(mx + 8, my - 8, seg); }
+    else { hideSegmentTooltip(); }
+  });
+  wrap.addEventListener('mouseleave', hideSegmentTooltip);
+})();
+
 function addSegmentCard(seg, num) {
   const card = document.createElement('div');
   card.className = 'segment-card';
-  card.innerHTML = '<div class="seg-header"><span class="seg-num">Segment ' + num + '</span><span class="seg-time">' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's</span></div><div class="seg-dur">Duration: ' + (seg.end - seg.start).toFixed(2) + 's' + (seg.rms ? ' &middot; RMS: ' + seg.rms.toFixed(1) + ' dB' : '') + '</div>';
+  card.innerHTML = '<div class="seg-header"><span class="seg-num">Segment ' + num + '</span><span class="seg-time">' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's</span></div><div class="seg-dur">Duration: ' + (seg.end - seg.start).toFixed(2) + 's &middot; RMS: ' + (seg.rms || 0).toFixed(1) + ' dB</div>' + (seg.audio ? '<audio controls src="' + seg.audio + '" style="width:100%;margin-top:6px;height:36px"></audio>' : '');
   segmentsDiv.appendChild(card);
   card.scrollIntoView({behavior: 'smooth', block: 'end'});
 }
@@ -331,6 +412,7 @@ async function startMic() {
   stopBtn.disabled = false;
   resetBtn.disabled = false;
   adaptiveCb.disabled = true;
+  document.getElementById('rmsFilterCb').disabled = true;
   sampleRateSelect.disabled = true;
   setStatus('Recording', 'recording');
   connectWS();
@@ -344,6 +426,7 @@ function stopMic() {
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   if (ws) { ws.close(); ws = null; }
   adaptiveCb.disabled = false;
+  document.getElementById('rmsFilterCb').disabled = false;
   sampleRateSelect.disabled = false;
   stopBtn.disabled = true;
 }
@@ -363,6 +446,8 @@ resetBtn.addEventListener('click', () => {
   flushSection.classList.remove('show');
   segCount.textContent = '0';
   vadCursor.style.display = 'none';
+  hideSegmentTooltip();
+  updateStats();
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'reset'}));
   redrawChart();
 });

@@ -70,8 +70,12 @@ h1{font-size:24px;margin-bottom:4px}
   </select>
 </label>
 <label class="adaptive-label">
-  <input type="checkbox" name="adaptive" value="true">
+  <input type="checkbox" name="adaptive" value="true" {{if .AdaptiveChecked}}checked{{end}}>
   Adaptive VAD (dynamic noise floor, energy filter)
+</label>
+<label class="adaptive-label">
+  <input type="checkbox" name="disable_rms" value="true" {{if .DisableRMSChecked}}checked{{end}}>
+  Disable RMS post-filter
 </label>
 </div>
 <button type="submit">{{if .HasResults}}Re-analyze{{else}}Analyze{{end}}</button>

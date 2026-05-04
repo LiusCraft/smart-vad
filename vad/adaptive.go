@@ -50,13 +50,14 @@ func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 type AdaptiveConfig struct {
 	DetectorConfig Config
 
-	WindowDuration    float64
-	NoiseFloorFrac    float64 // fraction of quietest frames to average for noise baseline, default 0.1
-	EnergyOffsetDB    float64
-	AdaptThresholdMin float32
-	AdaptThresholdMax float32
-	AdaptMinSpeechMin int
-	AdaptMinSpeechMax int
+	WindowDuration       float64
+	NoiseFloorFrac       float64 // fraction of quietest frames to average for noise baseline, default 0.1
+	EnergyOffsetDB       float64
+	AdaptThresholdMin    float32
+	AdaptThresholdMax    float32
+	AdaptMinSpeechMin    int
+	AdaptMinSpeechMax    int
+	DisableRMSPostFilter bool
 }
 
 func (c *AdaptiveConfig) setDefaults() {
@@ -199,14 +200,16 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 		return Result{}, err
 	}
 
-	a.rawSegments = make([]Segment, len(result.Segments))
-	copy(a.rawSegments, result.Segments)
+	if !a.cfg.DisableRMSPostFilter {
+		a.rawSegments = make([]Segment, len(result.Segments))
+		copy(a.rawSegments, result.Segments)
 
-	minDB := baseline + a.cfg.EnergyOffsetDB
-	result.Segments = FilterSegments(pcm, result.Segments, a.sampleRate, minDB)
+		minDB := baseline + a.cfg.EnergyOffsetDB
+		result.Segments = FilterSegments(pcm, result.Segments, a.sampleRate, minDB)
 
-	a.keptSegments = make([]Segment, len(result.Segments))
-	copy(a.keptSegments, result.Segments)
+		a.keptSegments = make([]Segment, len(result.Segments))
+		copy(a.keptSegments, result.Segments)
+	}
 
 	return result, nil
 }
@@ -238,11 +241,13 @@ func (a *AdaptiveDetector) Process(chunk []float32) error {
 	}
 
 	baseline := a.computeBaseline()
-	a.baselineDB = baseline
-	threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
-	a.inner.SetThreshold(threshold)
-	a.inner.SetMinSpeechDurationMs(minSpeechMs)
-	a.inner.SetMinSilenceDurationMs(minSilenceMs)
+	if math.Abs(baseline-a.baselineDB) >= 3 {
+		a.baselineDB = baseline
+		threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
+		a.inner.SetThreshold(threshold)
+		a.inner.SetMinSpeechDurationMs(minSpeechMs)
+		a.inner.SetMinSilenceDurationMs(minSilenceMs)
+	}
 
 	return a.inner.Process(chunk)
 }
