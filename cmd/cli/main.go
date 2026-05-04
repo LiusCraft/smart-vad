@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-audio/wav"
+	"github.com/liushunshun/smart-vad/cmd/internal/check"
 	"github.com/liushunshun/smart-vad/html"
 	"github.com/liushunshun/smart-vad/slice"
 	"github.com/liushunshun/smart-vad/vad"
@@ -29,6 +30,8 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
+	check.ModelExists(*model)
 
 	f, err := os.Open(*input)
 	if err != nil {
