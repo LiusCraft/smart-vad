@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,8 +46,14 @@ func main() {
 	mux.HandleFunc("/ws", handleWS)
 	mux.HandleFunc("/analyze", handleAnalyze)
 
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatalf("listen on %s: %v", *addr, err)
+	}
+	*addr = listener.Addr().String()
+
 	log.Printf("Starting server on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	log.Fatal(http.Serve(listener, mux))
 }
 
 func readCookieBool(r *http.Request, name string) bool {
