@@ -33,25 +33,47 @@ func ModelExists(path string) {
 
 	fmt.Fprintf(os.Stderr, "The Silero VAD model (silero_vad.onnx) is required to run.\n")
 
-	tags := fetchTags()
-	if len(tags) == 0 {
-		fmt.Fprintf(os.Stderr, "\nCould not fetch available versions.\n")
-		if prompt("Download the latest version anyway?") {
+	choice := askWhoInstalls()
+	switch choice {
+	case "self":
+		printManualDownload()
+		os.Exit(1)
+	case "auto":
+		tags := fetchTags()
+		if len(tags) == 0 {
+			fmt.Fprintf(os.Stderr, "\nCould not fetch version list. Downloading latest (master)...\n")
 			if err := downloadModel(path, "master"); err != nil {
 				fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
-			} else {
-				return
+				printManualDownload()
+				os.Exit(1)
 			}
+			return
 		}
-		printManualDownload()
-		os.Exit(1)
+		selected := askVersion(tags)
+		if err := downloadModel(path, tags[selected]); err != nil {
+			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
+			printManualDownload()
+			os.Exit(1)
+		}
 	}
+}
 
-	selected := askVersion(tags)
-	if err := downloadModel(path, tags[selected]); err != nil {
-		fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
-		printManualDownload()
-		os.Exit(1)
+func askWhoInstalls() string {
+	fmt.Fprintf(os.Stderr, "\nHow to proceed?\n")
+	fmt.Fprintf(os.Stderr, "  1. Auto download — we fetch the model for you\n")
+	fmt.Fprintf(os.Stderr, "  2. I'll do it myself — show manual instructions and exit\n\n")
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Fprintf(os.Stderr, "Choose [1/2, default: 1]: ")
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" || line == "1" {
+			return "auto"
+		}
+		if line == "2" {
+			return "self"
+		}
 	}
 }
 
@@ -88,7 +110,7 @@ func askVersion(tags []string) int {
 		fmt.Fprintf(os.Stderr, "  %2d. %s\n", i+1, tag)
 	}
 	if len(tags) > 20 {
-		fmt.Fprintf(os.Stderr, "  ... (showing top 20)\n")
+		fmt.Fprintf(os.Stderr, "  ... (showing top 20, %d total)\n", len(tags))
 	}
 
 	fmt.Fprintf(os.Stderr, "\nSelect version [default: 1, latest: %s]: ", tags[0])
@@ -153,12 +175,4 @@ func printManualDownload() {
 func isTerminal() bool {
 	stat, _ := os.Stdin.Stat()
 	return (stat.Mode() & os.ModeCharDevice) != 0
-}
-
-func prompt(q string) bool {
-	fmt.Fprintf(os.Stderr, "%s [Y/n] ", q)
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	return line == "" || strings.EqualFold(line, "y") || strings.EqualFold(line, "yes")
 }
