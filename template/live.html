@@ -1,459 +1,1148 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Live VAD</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:24px}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-.header h1{font-size:22px}
-.header .nav a{color:#4a9eff;text-decoration:none;font-size:13px;margin-left:12px}
-.controls-bar{background:#16213e;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.controls-bar button{background:#0f3460;border:none;color:#fff;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:14px;transition:background .2s}
-.controls-bar button:hover{background:#1a4a80}
-.controls-bar button.primary{background:#2ecc71}
-.controls-bar button.primary:hover{background:#27ae60}
-.controls-bar button.danger{background:#e74c3c}
-.controls-bar button.danger:hover{background:#c0392b}
-.controls-bar button:disabled{background:#555;cursor:not-allowed}
-.controls-bar .status{display:flex;align-items:center;gap:8px;font-size:13px;color:#888}
-.controls-bar .status .dot{width:10px;height:10px;border-radius:50%;background:#555}
-.controls-bar .status .dot.recording{background:#e74c3c;animation:pulse 1s infinite}
-.controls-bar .status .dot.speech{background:#f1c40f}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
-.controls-bar .stat-val{font-size:13px;color:#888}
-.controls-bar .stat-val span{color:#e0e0e0;font-weight:600}
-.adaptive-label{display:flex;align-items:center;gap:6px;cursor:pointer;color:#888;font-size:13px}
-.adaptive-label input{width:16px;height:16px;accent-color:#4a9eff;cursor:pointer}
-.section{background:#16213e;border-radius:12px;padding:20px;margin-bottom:20px}
-.section h2{font-size:16px;margin-bottom:12px;color:#a0a0b0}
-.chart-wrap{width:100%;height:160px;position:relative;background:#0f3460;border-radius:8px;overflow:hidden}
-.chart-wrap canvas{width:100%;height:100%;display:block}
-#vadCursor{position:absolute;top:0;width:2px;height:100%;background:#ff6b6b;pointer-events:none;display:none}
-#vadTooltip{position:absolute;background:rgba(15,52,96,0.95);border:1px solid #4a9eff;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.6;pointer-events:none;display:none;z-index:10;white-space:nowrap;backdrop-filter:blur(4px);color:#ccc}
-#vadTooltip .tt-title{color:#4a9eff;font-weight:600;font-size:13px;margin-bottom:4px}
-#vadTooltip .tt-label{color:#888}
-.segments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}
-.segment-card{background:#0f3460;border-radius:8px;padding:12px;font-size:13px;border-left:3px solid #2ecc71;animation:fadeIn .3s}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.segment-card .seg-header{display:flex;justify-content:space-between;margin-bottom:4px}
-.segment-card .seg-num{color:#4a9eff;font-weight:600}
-.segment-card .seg-time{color:#aaa}
-.segment-card .seg-dur{color:#888;font-size:12px}
-.segment-card audio{width:100%;margin-top:6px;height:36px}
-.adaptive-info{font-size:12px;color:#888;margin-top:8px;padding:8px 12px;background:#0f3460;border-radius:6px;display:none}
-.adaptive-info.show{display:block}
-.adaptive-info span{color:#e0e0e0}
-.stats-bar{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
-.stats-bar .stat{display:flex;flex-direction:column}
-.stats-bar .stat .val{font-size:20px;font-weight:600}
-.stats-bar .stat .lbl{font-size:11px;color:#666;margin-top:2px}
-.flush-section{display:none}
-.flush-section.show{display:block}
-.flush-section audio{width:100%;margin-top:8px}
-.error-msg{background:#1a0a0a;border:1px solid #e74c3c;border-radius:8px;padding:12px 16px;color:#e74c3c;font-size:13px;margin-bottom:16px;display:none}
-</style>
-</head>
-<body>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Smart VAD — Live</title>
+        <style>
+            *,
+            *::before,
+            *::after {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            :root {
+                --bg: #000000;
+                --surface: #0d0d0d;
+                --card: #1a1a1a;
+                --card-hover: #242424;
+                --fg: #ffffff;
+                --muted: #a7a7a7;
+                --dim: #5e5e5e;
+                --border: #2a2a2a;
+                --accent: #76b900;
+                --accent-hover: #8ad800;
+                --danger: #e52020;
+                --danger-bg: #1a0808;
+                --warn: #f1c40f;
+                --font:
+                    "SF Pro Display", -apple-system, BlinkMacSystemFont,
+                    "Segoe UI", system-ui, sans-serif;
+                --font-body:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+                    sans-serif;
+                --radius: 2px;
+                --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+            }
+            body {
+                font-family: var(--font-body);
+                background: var(--bg);
+                color: var(--fg);
+                min-height: 100vh;
+                -webkit-font-smoothing: antialiased;
+            }
 
-<div class="error-msg" id="errorMsg"></div>
+            /* ===== Layout ===== */
+            .app-header {
+                background: var(--surface);
+                border-bottom: 1px solid var(--border);
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                backdrop-filter: blur(12px);
+            }
+            .header-inner {
+                max-width: 1200px;
+                margin: 0 auto;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 24px;
+                height: 56px;
+            }
+            .logo {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                text-decoration: none;
+            }
+            .logo-icon {
+                width: 28px;
+                height: 28px;
+                border-radius: var(--radius);
+                background: var(--accent);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                font-weight: 700;
+                color: #000;
+            }
+            .logo-text {
+                font-family: var(--font);
+                font-size: 16px;
+                font-weight: 700;
+                color: var(--fg);
+                letter-spacing: -0.01em;
+            }
+            .logo-text span {
+                color: var(--accent);
+            }
+            .nav-links {
+                display: flex;
+                gap: 4px;
+            }
+            .nav-links a {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--muted);
+                text-decoration: none;
+                padding: 6px 14px;
+                border-radius: var(--radius);
+                transition: all 0.15s;
+            }
+            .nav-links a:hover {
+                color: var(--fg);
+                background: var(--card);
+            }
+            .nav-links a.active {
+                color: var(--accent);
+                background: rgba(118, 185, 0, 0.1);
+            }
 
-<div class="header">
-<h1>Live VAD</h1>
-<div class="nav"><a href="/">Upload Mode</a></div>
-</div>
+            .main-container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 32px 24px 64px;
+            }
 
-<div class="controls-bar">
-<button id="startBtn" class="primary">Start Mic</button>
-<button id="stopBtn" disabled class="danger">Stop</button>
-<button id="resetBtn" disabled>Reset</button>
-<div class="status">
-<span class="dot" id="statusDot"></span>
-<span id="statusText">Idle</span>
-</div>
-<div class="stat-val">
-Time: <span id="timeDisplay">0:00</span> &middot;
-Segments: <span id="segCount" style="color:#2ecc71">0</span>
-</div>
-<label class="adaptive-label" style="margin-left:auto">
-  Sample Rate:
-  <select id="sampleRateSelect" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">
-    <option value="16000" selected>16000 Hz</option>
-    <option value="44100">44100 Hz</option>
-    <option value="48000">48000 Hz</option>
-  </select>
-</label>
-<label class="adaptive-label">
-<input type="checkbox" id="adaptiveCb">
-Adaptive VAD
-</label>
-<label class="adaptive-label">
-<input type="checkbox" id="rmsFilterCb">
-RMS Post-filter
-</label>
-</div>
+            /* ===== Controls Bar ===== */
+            .controls-bar {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 16px 20px;
+                margin-bottom: 24px;
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+            .controls-bar button {
+                background: transparent;
+                color: var(--fg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: var(--font-body);
+            }
+            .controls-bar button:hover {
+                background: var(--card);
+                border-color: var(--muted);
+            }
+            .controls-bar button.primary {
+                background: transparent;
+                color: var(--accent);
+                border: 2px solid var(--accent);
+                font-weight: 700;
+            }
+            .controls-bar button.primary:hover {
+                background: var(--accent-hover);
+                color: #000;
+                border-color: var(--accent-hover);
+            }
+            .controls-bar button.danger {
+                color: var(--danger);
+                border-color: var(--danger);
+            }
+            .controls-bar button.danger:hover {
+                background: var(--danger);
+                color: #000;
+                border-color: var(--danger);
+            }
+            .controls-bar button:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+                color: var(--dim);
+                border-color: var(--dim);
+            }
+            .controls-bar button:disabled:hover {
+                background: transparent;
+                color: var(--dim);
+                border-color: var(--dim);
+            }
+            .controls-bar .status {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                color: var(--muted);
+            }
+            .controls-bar .status .dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                background: var(--dim);
+            }
+            .controls-bar .status .dot.recording {
+                background: var(--danger);
+                animation: pulse 1s infinite;
+            }
+            .controls-bar .status .dot.speech {
+                background: var(--warn);
+            }
+            @keyframes pulse {
+                0%,
+                100% {
+                    opacity: 1;
+                }
+                50% {
+                    opacity: 0.4;
+                }
+            }
+            .controls-bar .stat-val {
+                font-size: 13px;
+                color: var(--muted);
+                font-variant-numeric: tabular-nums;
+            }
+            .controls-bar .stat-val span {
+                color: var(--fg);
+                font-weight: 600;
+            }
+            .controls-bar .controls-right {
+                margin-left: auto;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .adaptive-label {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                cursor: pointer;
+                font-size: 13px;
+                color: var(--muted);
+            }
+            .adaptive-label input {
+                width: 15px;
+                height: 15px;
+                accent-color: var(--accent);
+                cursor: pointer;
+            }
+            .adaptive-label select {
+                background: var(--card);
+                color: var(--fg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 4px 8px;
+                font-size: 12px;
+                cursor: pointer;
+                font-family: var(--font-body);
+            }
+            .adaptive-label select:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
 
-<div class="section">
-<div class="stats-bar" id="statsBar">
-<div class="stat"><span class="val" id="statDuration" style="color:#4a9eff">0:00</span><span class="lbl">Duration</span></div>
-<div class="stat"><span class="val" id="statSegments" style="color:#2ecc71">0</span><span class="lbl">Segments</span></div>
-<div class="stat"><span class="val" id="statSpeechRatio" style="color:#f1c40f">0%</span><span class="lbl">Speech Ratio</span></div>
-</div>
+            /* ===== Error ===== */
+            .error-msg {
+                background: var(--danger-bg);
+                border: 1px solid var(--danger);
+                border-radius: var(--radius);
+                padding: 12px 16px;
+                color: var(--danger);
+                font-size: 13px;
+                margin-bottom: 16px;
+                display: none;
+            }
 
-<div class="section">
-<h2>VAD Confidence</h2>
-<div class="chart-wrap">
-<canvas id="vadCanvas"></canvas>
-<div id="vadCursor"></div>
-<div id="vadTooltip"></div>
-</div>
-<div class="adaptive-info" id="adaptiveInfo">
-Baseline: <span id="baselineDB">-</span> dB &middot;
-Energy Offset: <span id="energyOffsetDB">-</span> dB &middot;
-Threshold: <span id="currentThreshold">0.50</span>
-</div>
-</div>
+            /* ===== Stats ===== */
+            .stats-bar {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 12px;
+                margin-bottom: 24px;
+            }
+            .stats-bar .stat {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 16px 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+            .stats-bar .stat .val {
+                font-size: 26px;
+                font-weight: 700;
+                font-family: var(--font);
+                letter-spacing: -0.02em;
+            }
+            .stats-bar .stat .lbl {
+                font-size: 11px;
+                color: var(--dim);
+                text-transform: uppercase;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+            }
 
-<div class="section">
-<h2>Speech Segments</h2>
-<div id="segments" class="segments-grid"></div>
-<p id="noSegments" style="color:#555;font-size:13px">No speech segments detected yet</p>
-</div>
+            /* ===== Section Card ===== */
+            .section-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 20px 24px;
+                margin-bottom: 20px;
+            }
+            .section-card h2 {
+                font-family: var(--font);
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--accent);
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                margin-bottom: 16px;
+            }
 
-<div class="section flush-section" id="flushSection">
-<h2>Merged Result</h2>
-<audio controls id="mergedAudio" style="width:100%"></audio>
-</div>
+            /* ===== Chart ===== */
+            .chart-wrap {
+                width: 100%;
+                height: 130px;
+                position: relative;
+                background: var(--card);
+                border-radius: var(--radius);
+                overflow: hidden;
+            }
+            .chart-wrap canvas {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+            #vadCursor {
+                position: absolute;
+                top: 0;
+                width: 2px;
+                height: 100%;
+                background: var(--danger);
+                pointer-events: none;
+                display: none;
+                z-index: 2;
+            }
+            #vadTooltip {
+                position: absolute;
+                background: var(--card);
+                border: 1px solid var(--accent);
+                border-radius: var(--radius);
+                padding: 10px 14px;
+                font-size: 12px;
+                line-height: 1.6;
+                pointer-events: none;
+                display: none;
+                z-index: 20;
+                white-space: nowrap;
+                color: var(--muted);
+                box-shadow: var(--shadow);
+            }
+            #vadTooltip .tt-title {
+                color: var(--accent);
+                font-weight: 600;
+                font-size: 13px;
+                margin-bottom: 4px;
+                display: block;
+            }
+            #vadTooltip .tt-label {
+                color: var(--dim);
+            }
 
-<script>
-const SR = 16000;
-const CHART_DURATION = 60;
+            /* ===== Adaptive Info ===== */
+            .adaptive-info {
+                font-size: 12px;
+                color: var(--muted);
+                margin-top: 12px;
+                padding: 10px 14px;
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                display: none;
+                line-height: 1.6;
+            }
+            .adaptive-info.show {
+                display: block;
+            }
+            .adaptive-info span {
+                color: var(--fg);
+                font-weight: 600;
+            }
 
-function loadPref(key, def) { const v = localStorage.getItem('vad_' + key); return v !== null ? v === 'true' : def; }
-function savePref(key, val) { localStorage.setItem('vad_' + key, val); }
+            /* ===== Segments ===== */
+            .segments-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 12px;
+            }
+            .segment-card {
+                background: var(--card);
+                border-radius: var(--radius);
+                padding: 14px 16px;
+                cursor: pointer;
+                border: 1px solid var(--border);
+                border-left: 3px solid var(--accent);
+                transition:
+                    background 0.15s,
+                    border-color 0.15s;
+                animation: fadeIn 0.3s;
+            }
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(8px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            .segment-card:hover {
+                background: var(--card-hover);
+                border-color: var(--accent);
+            }
+            .segment-card .seg-header {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 6px;
+            }
+            .segment-card .seg-num {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--fg);
+            }
+            .segment-card .seg-time {
+                color: var(--muted);
+                font-weight: 400;
+                font-size: 13px;
+            }
+            .segment-card .seg-dur {
+                color: var(--dim);
+                font-size: 12px;
+                margin-top: 4px;
+            }
+            .segment-card audio {
+                width: 100%;
+                margin-top: 8px;
+                height: 32px;
+                border-radius: var(--radius);
+            }
 
-document.getElementById('adaptiveCb').checked = loadPref('adaptive', true);
-document.getElementById('rmsFilterCb').checked = loadPref('rmsFilter', true);
+            /* ===== Flush Section ===== */
+            .flush-section {
+                display: none;
+            }
+            .flush-section.show {
+                display: block;
+            }
+            .flush-section audio {
+                width: 100%;
+                margin-top: 8px;
+                border-radius: var(--radius);
+            }
 
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const resetBtn = document.getElementById('resetBtn');
-const statusDot = document.getElementById('statusDot');
-const statusText = document.getElementById('statusText');
-const timeDisplay = document.getElementById('timeDisplay');
-const segCount = document.getElementById('segCount');
-const adaptiveCb = document.getElementById('adaptiveCb');
-const adaptiveInfo = document.getElementById('adaptiveInfo');
-const baselineDB = document.getElementById('baselineDB');
-const energyOffsetDB = document.getElementById('energyOffsetDB');
-const currentThreshold = document.getElementById('currentThreshold');
-const canvas = document.getElementById('vadCanvas');
-const vadCursor = document.getElementById('vadCursor');
-const segmentsDiv = document.getElementById('segments');
-const noSegments = document.getElementById('noSegments');
-const flushSection = document.getElementById('flushSection');
-const mergedAudio = document.getElementById('mergedAudio');
-const errorMsg = document.getElementById('errorMsg');
-const sampleRateSelect = document.getElementById('sampleRateSelect');
-const ctx = canvas.getContext('2d');
+            /* ===== Audio element ===== */
+            audio::-webkit-media-controls-panel {
+                background: var(--card);
+            }
+            audio {
+                filter: invert(1) hue-rotate(180deg);
+                opacity: 0.85;
+                width: 100%;
+                border-radius: var(--radius);
+            }
+            audio:hover {
+                opacity: 1;
+            }
 
-let ws, stream, audioCtx, processor, source, isRunning = false;
-let probs = [], segments = [], currentTime = 0, triggered = false, curThreshold = 0.5;
-let segmentCounter = 0;
+            /* ===== No segments placeholder ===== */
+            .no-segments {
+                font-size: 13px;
+                color: var(--dim);
+                margin-top: 4px;
+                line-height: 1.5;
+            }
 
-function showError(m) { errorMsg.textContent = m; errorMsg.style.display = 'block'; setTimeout(() => errorMsg.style.display = 'none', 5000); }
-function setStatus(t, c) { statusText.textContent = t; statusDot.className = 'dot' + (c ? ' ' + c : ''); }
-function fmt(t) { const m = Math.floor(t/60), s = Math.floor(t%60); return m + ':' + String(s).padStart(2,'0'); }
+            /* ===== Responsive ===== */
+            @media (max-width: 768px) {
+                .header-inner {
+                    padding: 0 16px;
+                }
+                .main-container {
+                    padding: 20px 16px 40px;
+                }
+                .controls-bar {
+                    flex-direction: column;
+                    align-items: stretch;
+                    gap: 12px;
+                }
+                .controls-bar .controls-right {
+                    margin-left: 0;
+                    flex-wrap: wrap;
+                }
+                .stats-bar {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+                .section-card {
+                    padding: 16px;
+                }
+                .segments-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <header class="app-header">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">V</div>
+                    <span class="logo-text">Smart <span>VAD</span></span>
+                </a>
+                <nav class="nav-links">
+                    <a href="/">Analyze</a>
+                    <a href="/live" class="active">Live</a>
+                </nav>
+            </div>
+        </header>
 
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const rmsEnabled = document.getElementById('rmsFilterCb').checked;
-  savePref('adaptive', adaptiveCb.checked);
-  savePref('rmsFilter', rmsEnabled);
-  ws = new WebSocket(proto + '//' + location.host + '/ws?adaptive=' + adaptiveCb.checked + '&disable_rms=' + !rmsEnabled);
-  ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { console.log('WS connected'); setStatus('Connected'); };
-  ws.onmessage = e => {
-    if (typeof e.data === 'string') { handleMsg(JSON.parse(e.data)); }
-    else { console.log('WS recv binary:', e.data.byteLength, 'bytes'); }
-  };
-  ws.onclose = (ev) => { console.log('WS closed:', ev.code, ev.reason); if (isRunning) { setStatus('Disconnected'); stopMic(); } };
-  ws.onerror = () => { console.error('WS error'); showError('WebSocket error'); };
-}
+        <div class="main-container">
+            <div class="error-msg" id="errorMsg"></div>
 
-function handleMsg(msg) {
-  console.log('WS recv:', msg.type, msg);
-  switch (msg.type) {
-    case 'probs':
-      if (msg.probs && msg.probs.length > 0) {
-        probs.push(...msg.probs);
-        currentTime = probs.length * 512 / SR;
-        redrawChart();
-      }
-      break;
-    case 'segment_start':
-      segments.push({start: msg.start, end: null});
-      break;
-    case 'segment_end':
-      for (let i = segments.length - 1; i >= 0; i--) {
-        if (segments[i].end === null) {
-          segments[i].end = msg.end;
-          segments[i].rms = msg.rms || 0;
-          segments[i].audio = msg.audio || '';
-          segmentCounter++;
-          addSegmentCard(segments[i], segmentCounter);
-          break;
-        }
-      }
-      segCount.textContent = segments.filter(s => s.end !== null).length;
-      noSegments.style.display = 'none';
-      break;
-    case 'state':
-      triggered = msg.triggered;
-      if (triggered) statusDot.className = 'dot speech';
-      break;
-    case 'progress':
-      currentTime = msg.time;
-      timeDisplay.textContent = fmt(currentTime);
-      updateCursor(currentTime);
-      updateStats();
-      break;
-    case 'adaptive_info':
-      baselineDB.textContent = msg.baseline_db.toFixed(1);
-      energyOffsetDB.textContent = msg.energy_offset_db.toFixed(1);
-      adaptiveInfo.classList.add('show');
-      break;
-    case 'threshold':
-      curThreshold = msg.threshold;
-      currentThreshold.textContent = msg.threshold.toFixed(2);
-      break;
-    case 'flush_result':
-      isRunning = false;
-      flushSection.classList.add('show');
-      setStatus('Done');
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      if (msg.merged_audio) mergedAudio.src = msg.merged_audio;
-      break;
-    case 'error':
-      showError(msg.message);
-      break;
-  }
-}
+            <div class="controls-bar">
+                <button id="startBtn" class="primary">Start Mic</button>
+                <button id="stopBtn" disabled class="danger">Stop</button>
+                <button id="resetBtn" disabled>Reset</button>
+                <div class="status">
+                    <span class="dot" id="statusDot"></span>
+                    <span id="statusText">Idle</span>
+                </div>
+                <div class="stat-val">
+                    Time: <span id="timeDisplay">0:00</span> &middot; Segments:
+                    <span id="segCount" style="color: var(--accent)">0</span>
+                </div>
+                <div class="controls-right">
+                    <label class="adaptive-label">
+                        Sample Rate:
+                        <select id="sampleRateSelect">
+                            <option value="16000" selected>16000 Hz</option>
+                            <option value="44100">44100 Hz</option>
+                            <option value="48000">48000 Hz</option>
+                        </select>
+                    </label>
+                    <label class="adaptive-label">
+                        <input type="checkbox" id="adaptiveCb" />
+                        Adaptive VAD
+                    </label>
+                    <label class="adaptive-label">
+                        <input type="checkbox" id="rmsFilterCb" />
+                        RMS Post-filter
+                    </label>
+                </div>
+            </div>
 
-function resizeCanvas() {
-  const p = canvas.parentElement;
-  canvas.width = p.clientWidth * 2;
-  canvas.height = p.clientHeight * 2;
-  canvas.style.width = p.clientWidth + 'px';
-  canvas.style.height = p.clientHeight + 'px';
-}
+            <div class="stats-bar" id="statsBar">
+                <div class="stat">
+                    <span class="val" style="color: #4a9eff" id="statDuration"
+                        >0:00</span
+                    ><span class="lbl">Duration</span>
+                </div>
+                <div class="stat">
+                    <span
+                        class="val"
+                        style="color: var(--accent)"
+                        id="statSegments"
+                        >0</span
+                    ><span class="lbl">Segments</span>
+                </div>
+                <div class="stat">
+                    <span
+                        class="val"
+                        style="color: var(--warn)"
+                        id="statSpeechRatio"
+                        >0%</span
+                    ><span class="lbl">Speech Ratio</span>
+                </div>
+            </div>
 
-function redrawChart() {
-  resizeCanvas();
-  ctx.scale(2, 2);
-  const W = canvas.clientWidth, H = canvas.clientHeight;
-  const pad = {t: 10, b: 22, l: 40, r: 16};
-  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
-  const dur = Math.max(currentTime || 1, 1);
-  const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
-  const viewDur = Math.min(dur, CHART_DURATION);
+            <div class="section-card">
+                <h2>VAD Confidence</h2>
+                <div class="chart-wrap">
+                    <canvas id="vadCanvas"></canvas>
+                    <div id="vadCursor"></div>
+                    <div id="vadTooltip"></div>
+                </div>
+                <div class="adaptive-info" id="adaptiveInfo">
+                    Baseline: <span id="baselineDB">-</span> dB &middot; Energy
+                    Offset: <span id="energyOffsetDB">-</span> dB &middot;
+                    Threshold: <span id="currentThreshold">0.50</span>
+                </div>
+            </div>
 
-  ctx.fillStyle = '#0f3460'; ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
-  ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + ch / 4 * i;
-    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-    ctx.fillStyle = '#666'; ctx.fillText((1 - i * 0.25).toFixed(2), pad.l - 6, y + 4);
-  }
-  const ty = pad.t + ch * (1 - Math.min(1, Math.max(0, curThreshold)));
-  ctx.strokeStyle = 'rgba(255,107,107,0.4)'; ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(pad.l, ty); ctx.lineTo(W - pad.r, ty); ctx.stroke(); ctx.setLineDash([]);
-  ctx.fillStyle = 'rgba(255,107,107,0.6)'; ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('threshold ' + curThreshold.toFixed(2), W - pad.r - 82, ty - 4);
+            <div class="section-card">
+                <h2>Speech Segments</h2>
+                <div id="segments" class="segments-grid"></div>
+                <p id="noSegments" class="no-segments">
+                    No speech segments detected yet
+                </p>
+            </div>
 
-  if (probs.length < 2) return;
-  ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 2; ctx.beginPath();
-  let first = true;
-  for (let i = 0; i < probs.length; i++) {
-    const t = i * 512 / SR;
-    if (t < scrollOff) continue;
-    const x = pad.l + cw * (t - scrollOff) / viewDur;
-    const y = pad.t + ch * (1 - Math.min(1, Math.max(0, probs[i])));
-    if (first) { ctx.moveTo(x, y); first = false; } else { ctx.lineTo(x, y); }
-  }
-  ctx.stroke();
+            <div class="section-card flush-section" id="flushSection">
+                <h2>Merged Result</h2>
+                <audio controls id="mergedAudio"></audio>
+            </div>
+        </div>
 
-  ctx.globalAlpha = 0.15;
-  for (const seg of segments) {
-    if (seg.end === null) continue;
-    const x1 = pad.l + cw * (seg.start - scrollOff) / viewDur;
-    const x2 = pad.l + cw * (seg.end - scrollOff) / viewDur;
-    if (x2 < pad.l || x1 > W - pad.r) continue;
-    ctx.fillStyle = '#2ecc71';
-    ctx.fillRect(Math.max(pad.l, x1), pad.t, Math.min(x2, W-pad.r) - Math.max(pad.l, x1), ch);
-  }
-  ctx.globalAlpha = 1;
+        <script>
+            const SR = 16000;
+            const CHART_DURATION = 60;
 
-  ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-  for (let i = 0; i <= 6; i++) {
-    const t = scrollOff + viewDur / 6 * i;
-    ctx.fillText(t.toFixed(1) + 's', pad.l + cw / 6 * i, H - pad.b + 10);
-  }
-}
+            function loadPref(key, def) {
+                const v = localStorage.getItem("vad_" + key);
+                return v !== null ? v === "true" : def;
+            }
+            function savePref(key, val) {
+                localStorage.setItem("vad_" + key, val);
+            }
 
-function updateCursor(t) {
-  const p = canvas.parentElement;
-  const W = p.clientWidth, pad = {l: 40, r: 16}, cw = W - pad.l - pad.r;
-  const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
-  const viewDur = Math.min(Math.max(currentTime || 1, 1), CHART_DURATION);
-  const x = pad.l + cw * (t - scrollOff) / viewDur;
-  vadCursor.style.left = x + 'px';
-  vadCursor.style.display = (t > 0 && x >= pad.l && x <= W - pad.r) ? 'block' : 'none';
-}
+            document.getElementById("adaptiveCb").checked = loadPref(
+                "adaptive",
+                true,
+            );
+            document.getElementById("rmsFilterCb").checked = loadPref(
+                "rmsFilter",
+                true,
+            );
 
-function updateStats() {
-  const completed = segments.filter(s => s.end !== null);
-  const totalSpeech = completed.reduce((sum, s) => sum + (s.end - s.start), 0);
-  const ratio = currentTime > 0 ? (totalSpeech / currentTime * 100) : 0;
-  document.getElementById('statDuration').textContent = fmt(currentTime);
-  document.getElementById('statSegments').textContent = completed.length;
-  document.getElementById('statSpeechRatio').textContent = ratio.toFixed(1) + '%';
-}
+            const startBtn = document.getElementById("startBtn");
+            const stopBtn = document.getElementById("stopBtn");
+            const resetBtn = document.getElementById("resetBtn");
+            const statusDot = document.getElementById("statusDot");
+            const statusText = document.getElementById("statusText");
+            const timeDisplay = document.getElementById("timeDisplay");
+            const segCount = document.getElementById("segCount");
+            const adaptiveCb = document.getElementById("adaptiveCb");
+            const adaptiveInfo = document.getElementById("adaptiveInfo");
+            const baselineDB = document.getElementById("baselineDB");
+            const energyOffsetDB = document.getElementById("energyOffsetDB");
+            const currentThreshold =
+                document.getElementById("currentThreshold");
+            const canvas = document.getElementById("vadCanvas");
+            const vadCursor = document.getElementById("vadCursor");
+            const segmentsDiv = document.getElementById("segments");
+            const noSegments = document.getElementById("noSegments");
+            const flushSection = document.getElementById("flushSection");
+            const mergedAudio = document.getElementById("mergedAudio");
+            const errorMsg = document.getElementById("errorMsg");
+            const sampleRateSelect =
+                document.getElementById("sampleRateSelect");
+            const ctx = canvas.getContext("2d");
 
-function findSegmentAtTime(t) {
-  for (const seg of segments) {
-    if (seg.end === null) continue;
-    if (t >= seg.start && t <= seg.end) return seg;
-  }
-  return null;
-}
+            let ws,
+                stream,
+                audioCtx,
+                processor,
+                source,
+                isRunning = false;
+            let probs = [],
+                segments = [],
+                currentTime = 0,
+                triggered = false,
+                curThreshold = 0.5;
+            let segmentCounter = 0;
 
-function showSegmentTooltip(x, y, seg) {
-  const el = document.getElementById('vadTooltip');
-  const dur = (seg.end - seg.start).toFixed(2);
-  el.innerHTML = '<div class="tt-title">Segment</div><div><span class="tt-label">Time:</span> ' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's (' + dur + 's)</div><div><span class="tt-label">RMS:</span> ' + (seg.rms || 0).toFixed(1) + ' dB</div>';
-  el.style.left = x + 'px';
-  el.style.top = y + 'px';
-  el.style.display = 'block';
-}
+            function showError(m) {
+                errorMsg.textContent = m;
+                errorMsg.style.display = "block";
+                setTimeout(() => (errorMsg.style.display = "none"), 5000);
+            }
+            function setStatus(t, c) {
+                statusText.textContent = t;
+                statusDot.className = "dot" + (c ? " " + c : "");
+            }
+            function fmt(t) {
+                const m = Math.floor(t / 60),
+                    s = Math.floor(t % 60);
+                return m + ":" + String(s).padStart(2, "0");
+            }
 
-function hideSegmentTooltip() {
-  document.getElementById('vadTooltip').style.display = 'none';
-}
+            function connectWS() {
+                const proto = location.protocol === "https:" ? "wss:" : "ws:";
+                const rmsEnabled =
+                    document.getElementById("rmsFilterCb").checked;
+                savePref("adaptive", adaptiveCb.checked);
+                savePref("rmsFilter", rmsEnabled);
+                ws = new WebSocket(
+                    proto +
+                        "//" +
+                        location.host +
+                        "/ws?adaptive=" +
+                        adaptiveCb.checked +
+                        "&disable_rms=" +
+                        !rmsEnabled,
+                );
+                ws.binaryType = "arraybuffer";
+                ws.onopen = () => {
+                    console.log("WS connected");
+                    setStatus("Connected");
+                };
+                ws.onmessage = (e) => {
+                    if (typeof e.data === "string") {
+                        handleMsg(JSON.parse(e.data));
+                    } else {
+                        console.log(
+                            "WS recv binary:",
+                            e.data.byteLength,
+                            "bytes",
+                        );
+                    }
+                };
+                ws.onclose = (ev) => {
+                    console.log("WS closed:", ev.code, ev.reason);
+                    if (isRunning) {
+                        setStatus("Disconnected");
+                        stopMic();
+                    }
+                };
+                ws.onerror = () => {
+                    console.error("WS error");
+                    showError("WebSocket error");
+                };
+            }
 
-// Chart hover tooltip
-(function() {
-  const wrap = document.querySelector('.chart-wrap');
-  wrap.addEventListener('mousemove', function(e) {
-    const rect = wrap.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const W = rect.width, pad = {l: 40, r: 16}, cw = W - pad.l - pad.r;
-    if (mx < pad.l || mx > W - pad.r) { hideSegmentTooltip(); return; }
-    const scrollOff = currentTime > CHART_DURATION ? currentTime - CHART_DURATION : 0;
-    const viewDur = Math.min(Math.max(currentTime || 1, 1), CHART_DURATION);
-    const t = scrollOff + (mx - pad.l) / cw * viewDur;
-    const seg = findSegmentAtTime(t);
-    if (seg) { showSegmentTooltip(mx + 8, my - 8, seg); }
-    else { hideSegmentTooltip(); }
-  });
-  wrap.addEventListener('mouseleave', hideSegmentTooltip);
-})();
+            function handleMsg(msg) {
+                console.log("WS recv:", msg.type, msg);
+                switch (msg.type) {
+                    case "probs":
+                        if (msg.probs && msg.probs.length > 0) {
+                            probs.push(...msg.probs);
+                            currentTime = (probs.length * 512) / SR;
+                            redrawChart();
+                        }
+                        break;
+                    case "segment_start":
+                        segments.push({ start: msg.start, end: null });
+                        break;
+                    case "segment_end":
+                        for (let i = segments.length - 1; i >= 0; i--) {
+                            if (segments[i].end === null) {
+                                segments[i].end = msg.end;
+                                segments[i].rms = msg.rms || 0;
+                                segments[i].audio = msg.audio || "";
+                                segmentCounter++;
+                                addSegmentCard(segments[i], segmentCounter);
+                                break;
+                            }
+                        }
+                        segCount.textContent = segments.filter(
+                            (s) => s.end !== null,
+                        ).length;
+                        noSegments.style.display = "none";
+                        break;
+                    case "state":
+                        triggered = msg.triggered;
+                        if (triggered) statusDot.className = "dot speech";
+                        break;
+                    case "progress":
+                        currentTime = msg.time;
+                        timeDisplay.textContent = fmt(currentTime);
+                        updateCursor(currentTime);
+                        updateStats();
+                        break;
+                    case "adaptive_info":
+                        baselineDB.textContent = msg.baseline_db.toFixed(1);
+                        energyOffsetDB.textContent =
+                            msg.energy_offset_db.toFixed(1);
+                        adaptiveInfo.classList.add("show");
+                        break;
+                    case "threshold":
+                        curThreshold = msg.threshold;
+                        currentThreshold.textContent = msg.threshold.toFixed(2);
+                        break;
+                    case "flush_result":
+                        isRunning = false;
+                        flushSection.classList.add("show");
+                        setStatus("Done");
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                        if (msg.merged_audio)
+                            mergedAudio.src = msg.merged_audio;
+                        break;
+                    case "error":
+                        showError(msg.message);
+                        break;
+                }
+            }
 
-function addSegmentCard(seg, num) {
-  const card = document.createElement('div');
-  card.className = 'segment-card';
-  card.innerHTML = '<div class="seg-header"><span class="seg-num">Segment ' + num + '</span><span class="seg-time">' + seg.start.toFixed(2) + 's &ndash; ' + seg.end.toFixed(2) + 's</span></div><div class="seg-dur">Duration: ' + (seg.end - seg.start).toFixed(2) + 's &middot; RMS: ' + (seg.rms || 0).toFixed(1) + ' dB</div>' + (seg.audio ? '<audio controls src="' + seg.audio + '" style="width:100%;margin-top:6px;height:36px"></audio>' : '');
-  segmentsDiv.appendChild(card);
-  card.scrollIntoView({behavior: 'smooth', block: 'end'});
-}
+            function resizeCanvas() {
+                const p = canvas.parentElement;
+                canvas.width = p.clientWidth * 2;
+                canvas.height = p.clientHeight * 2;
+                canvas.style.width = p.clientWidth + "px";
+                canvas.style.height = p.clientHeight + "px";
+            }
 
-function downsample(buffer, srcRate, dstRate) {
-  if (srcRate === dstRate) return buffer;
-  const ratio = srcRate / dstRate;
-  const outLen = Math.floor(buffer.length / ratio);
-  const out = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    out[i] = buffer[Math.floor(i * ratio)];
-  }
-  return out;
-}
+            function redrawChart() {
+                resizeCanvas();
+                ctx.scale(2, 2);
+                const W = canvas.clientWidth,
+                    H = canvas.clientHeight;
+                const pad = { t: 10, b: 22, l: 40, r: 16 };
+                const cw = W - pad.l - pad.r,
+                    ch = H - pad.t - pad.b;
+                const dur = Math.max(currentTime || 1, 1);
+                const scrollOff =
+                    currentTime > CHART_DURATION
+                        ? currentTime - CHART_DURATION
+                        : 0;
+                const viewDur = Math.min(dur, CHART_DURATION);
 
-async function startMic() {
-  const targetRate = parseInt(sampleRateSelect.value);
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, sampleRate: {ideal: targetRate}, channelCount: {ideal: 1}}});
-  } catch (e) { showError('Mic denied: ' + e.message); return; }
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: targetRate});
-  } catch (e) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  console.log('AudioContext sampleRate:', audioCtx.sampleRate);
-  if (audioCtx.sampleRate !== targetRate) {
-    console.log('Requested', targetRate, 'but got', audioCtx.sampleRate);
-  }
-  source = audioCtx.createMediaStreamSource(stream);
-  processor = audioCtx.createScriptProcessor(4096, 1, 1);
-  processor.onaudioprocess = e => {
-    if (!isRunning) return;
-    const input = e.inputBuffer.getChannelData(0);
-    const sendBuf = downsample(input, audioCtx.sampleRate, 16000);
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(sendBuf);
-  };
-  source.connect(processor);
-  processor.connect(audioCtx.destination);
-  isRunning = true;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  resetBtn.disabled = false;
-  adaptiveCb.disabled = true;
-  document.getElementById('rmsFilterCb').disabled = true;
-  sampleRateSelect.disabled = true;
-  setStatus('Recording', 'recording');
-  connectWS();
-}
+                ctx.fillStyle = "#1a1a1a";
+                ctx.fillRect(0, 0, W, H);
+                ctx.strokeStyle = "rgba(255,255,255,0.06)";
+                ctx.lineWidth = 1;
+                ctx.font = "10px sans-serif";
+                ctx.textAlign = "right";
+                for (let i = 0; i <= 4; i++) {
+                    const y = pad.t + (ch / 4) * i;
+                    ctx.beginPath();
+                    ctx.moveTo(pad.l, y);
+                    ctx.lineTo(W - pad.r, y);
+                    ctx.stroke();
+                    ctx.fillStyle = "#5e5e5e";
+                    ctx.fillText((1 - i * 0.25).toFixed(2), pad.l - 6, y + 4);
+                }
+                const ty =
+                    pad.t + ch * (1 - Math.min(1, Math.max(0, curThreshold)));
+                ctx.strokeStyle = "rgba(229,32,32,0.5)";
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(pad.l, ty);
+                ctx.lineTo(W - pad.r, ty);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = "rgba(229,32,32,0.7)";
+                ctx.font = "9px sans-serif";
+                ctx.textAlign = "left";
+                ctx.fillText(
+                    "threshold " + curThreshold.toFixed(2),
+                    W - pad.r - 82,
+                    ty - 4,
+                );
 
-function stopMic() {
-  isRunning = false;
-  if (processor) { processor.disconnect(); processor = null; }
-  if (source) { source.disconnect(); source = null; }
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  if (ws) { ws.close(); ws = null; }
-  adaptiveCb.disabled = false;
-  document.getElementById('rmsFilterCb').disabled = false;
-  sampleRateSelect.disabled = false;
-  stopBtn.disabled = true;
-}
+                if (probs.length < 2) return;
+                ctx.strokeStyle = "#76b900";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                let first = true;
+                for (let i = 0; i < probs.length; i++) {
+                    const t = (i * 512) / SR;
+                    if (t < scrollOff) continue;
+                    const x = pad.l + (cw * (t - scrollOff)) / viewDur;
+                    const y =
+                        pad.t + ch * (1 - Math.min(1, Math.max(0, probs[i])));
+                    if (first) {
+                        ctx.moveTo(x, y);
+                        first = false;
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+                ctx.lineTo(pad.l + cw, pad.t + ch);
+                ctx.lineTo(pad.l, pad.t + ch);
+                ctx.closePath();
+                ctx.fillStyle = "rgba(118,185,0,0.08)";
+                ctx.fill();
 
-startBtn.addEventListener('click', startMic);
-stopBtn.addEventListener('click', () => {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'flush'}));
-  setStatus('Flushing...');
-  stopBtn.disabled = true;
-});
-resetBtn.addEventListener('click', () => {
-  probs = []; segments = []; currentTime = 0; triggered = false; curThreshold = 0.5;
-  segmentCounter = 0;
-  adaptiveInfo.classList.remove('show');
-  segmentsDiv.innerHTML = '';
-  noSegments.style.display = 'block';
-  flushSection.classList.remove('show');
-  segCount.textContent = '0';
-  vadCursor.style.display = 'none';
-  hideSegmentTooltip();
-  updateStats();
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'reset'}));
-  redrawChart();
-});
+                segments.forEach((seg) => {
+                    if (seg.end === null) return;
+                    const x1 = pad.l + (cw * (seg.start - scrollOff)) / viewDur;
+                    const x2 = pad.l + (cw * (seg.end - scrollOff)) / viewDur;
+                    if (x2 < pad.l || x1 > W - pad.r) return;
+                    ctx.fillStyle = "rgba(118,185,0,0.15)";
+                    ctx.fillRect(
+                        Math.max(pad.l, x1),
+                        pad.t,
+                        Math.min(x2, W - pad.r) - Math.max(pad.l, x1),
+                        ch,
+                    );
+                });
 
-let rt;
-window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(redrawChart, 200); });
-</script>
-</body>
+                ctx.fillStyle = "#5e5e5e";
+                ctx.font = "10px sans-serif";
+                ctx.textAlign = "center";
+                for (let i = 0; i <= 6; i++) {
+                    const t = scrollOff + (viewDur / 6) * i;
+                    ctx.fillText(
+                        t.toFixed(1) + "s",
+                        pad.l + (cw / 6) * i,
+                        H - pad.b + 10,
+                    );
+                }
+            }
+
+            function updateCursor(t) {
+                const p = canvas.parentElement;
+                const W = p.clientWidth,
+                    pad = { l: 40, r: 16 },
+                    cw = W - pad.l - pad.r;
+                const scrollOff =
+                    currentTime > CHART_DURATION
+                        ? currentTime - CHART_DURATION
+                        : 0;
+                const viewDur = Math.min(
+                    Math.max(currentTime || 1, 1),
+                    CHART_DURATION,
+                );
+                const x = pad.l + (cw * (t - scrollOff)) / viewDur;
+                vadCursor.style.left = x + "px";
+                vadCursor.style.display =
+                    t > 0 && x >= pad.l && x <= W - pad.r ? "block" : "none";
+            }
+
+            function updateStats() {
+                const completed = segments.filter((s) => s.end !== null);
+                const totalSpeech = completed.reduce(
+                    (sum, s) => sum + (s.end - s.start),
+                    0,
+                );
+                const ratio =
+                    currentTime > 0 ? (totalSpeech / currentTime) * 100 : 0;
+                document.getElementById("statDuration").textContent =
+                    fmt(currentTime);
+                document.getElementById("statSegments").textContent =
+                    completed.length;
+                document.getElementById("statSpeechRatio").textContent =
+                    ratio.toFixed(1) + "%";
+            }
+
+            function findSegmentAtTime(t) {
+                for (const seg of segments) {
+                    if (seg.end === null) continue;
+                    if (t >= seg.start && t <= seg.end) return seg;
+                }
+                return null;
+            }
+
+            function showSegmentTooltip(x, y, seg) {
+                const el = document.getElementById("vadTooltip");
+                const dur = (seg.end - seg.start).toFixed(2);
+                el.innerHTML =
+                    '<span class="tt-title">Segment</span><div><span class="tt-label">Time:</span> ' +
+                    seg.start.toFixed(2) +
+                    "s &ndash; " +
+                    seg.end.toFixed(2) +
+                    "s (" +
+                    dur +
+                    's)</div><div><span class="tt-label">RMS:</span> ' +
+                    (seg.rms || 0).toFixed(1) +
+                    " dB</div>";
+                const p = el.parentElement;
+                el.style.left =
+                    Math.min(x + 12, p.clientWidth - el.offsetWidth - 4) + "px";
+                el.style.top = Math.max(4, y - el.offsetHeight - 8) + "px";
+                el.style.display = "block";
+            }
+
+            function hideSegmentTooltip() {
+                document.getElementById("vadTooltip").style.display = "none";
+            }
+
+            (function () {
+                const wrap = document.querySelector(".chart-wrap");
+                wrap.addEventListener("mousemove", function (e) {
+                    const rect = wrap.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const W = rect.width,
+                        pad = { l: 40, r: 16 },
+                        cw = W - pad.l - pad.r;
+                    if (mx < pad.l || mx > W - pad.r) {
+                        hideSegmentTooltip();
+                        return;
+                    }
+                    const scrollOff =
+                        currentTime > CHART_DURATION
+                            ? currentTime - CHART_DURATION
+                            : 0;
+                    const viewDur = Math.min(
+                        Math.max(currentTime || 1, 1),
+                        CHART_DURATION,
+                    );
+                    const t = scrollOff + ((mx - pad.l) / cw) * viewDur;
+                    const seg = findSegmentAtTime(t);
+                    if (seg) {
+                        showSegmentTooltip(mx, my, seg);
+                    } else {
+                        hideSegmentTooltip();
+                    }
+                });
+                wrap.addEventListener("mouseleave", hideSegmentTooltip);
+            })();
+
+            function addSegmentCard(seg, num) {
+                const card = document.createElement("div");
+                card.className = "segment-card";
+                card.innerHTML =
+                    '<div class="seg-header"><span class="seg-num">Segment ' +
+                    num +
+                    '</span><span class="seg-time">' +
+                    seg.start.toFixed(2) +
+                    "s &ndash; " +
+                    seg.end.toFixed(2) +
+                    's</span></div><div class="seg-dur">Duration: ' +
+                    (seg.end - seg.start).toFixed(2) +
+                    "s &middot; RMS: " +
+                    (seg.rms || 0).toFixed(1) +
+                    " dB</div>" +
+                    (seg.audio
+                        ? '<audio controls src="' + seg.audio + '"></audio>'
+                        : "");
+                segmentsDiv.appendChild(card);
+                card.scrollIntoView({ behavior: "smooth", block: "end" });
+            }
+
+            function downsample(buffer, srcRate, dstRate) {
+                if (srcRate === dstRate) return buffer;
+                const ratio = srcRate / dstRate;
+                const outLen = Math.floor(buffer.length / ratio);
+                const out = new Float32Array(outLen);
+                for (let i = 0; i < outLen; i++) {
+                    out[i] = buffer[Math.floor(i * ratio)];
+                }
+                return out;
+            }
+
+            async function startMic() {
+                const targetRate = parseInt(sampleRateSelect.value);
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            sampleRate: { ideal: targetRate },
+                            channelCount: { ideal: 1 },
+                        },
+                    });
+                } catch (e) {
+                    showError("Mic denied: " + e.message);
+                    return;
+                }
+                try {
+                    audioCtx = new (
+                        window.AudioContext || window.webkitAudioContext
+                    )({ sampleRate: targetRate });
+                } catch (e) {
+                    audioCtx = new (
+                        window.AudioContext || window.webkitAudioContext
+                    )();
+                }
+                console.log("AudioContext sampleRate:", audioCtx.sampleRate);
+                if (audioCtx.sampleRate !== targetRate) {
+                    console.log(
+                        "Requested",
+                        targetRate,
+                        "but got",
+                        audioCtx.sampleRate,
+                    );
+                }
+                source = audioCtx.createMediaStreamSource(stream);
+                processor = audioCtx.createScriptProcessor(4096, 1, 1);
+                processor.onaudioprocess = (e) => {
+                    if (!isRunning) return;
+                    const input = e.inputBuffer.getChannelData(0);
+                    const sendBuf = downsample(
+                        input,
+                        audioCtx.sampleRate,
+                        16000,
+                    );
+                    if (ws && ws.readyState === WebSocket.OPEN)
+                        ws.send(sendBuf);
+                };
+                source.connect(processor);
+                processor.connect(audioCtx.destination);
+                isRunning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                resetBtn.disabled = false;
+                adaptiveCb.disabled = true;
+                document.getElementById("rmsFilterCb").disabled = true;
+                sampleRateSelect.disabled = true;
+                setStatus("Recording", "recording");
+                connectWS();
+            }
+
+            function stopMic() {
+                isRunning = false;
+                if (processor) {
+                    processor.disconnect();
+                    processor = null;
+                }
+                if (source) {
+                    source.disconnect();
+                    source = null;
+                }
+                if (audioCtx) {
+                    audioCtx.close();
+                    audioCtx = null;
+                }
+                if (stream) {
+                    stream.getTracks().forEach((t) => t.stop());
+                    stream = null;
+                }
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                adaptiveCb.disabled = false;
+                document.getElementById("rmsFilterCb").disabled = false;
+                sampleRateSelect.disabled = false;
+                stopBtn.disabled = true;
+            }
+
+            startBtn.addEventListener("click", startMic);
+            stopBtn.addEventListener("click", () => {
+                if (ws && ws.readyState === WebSocket.OPEN)
+                    ws.send(JSON.stringify({ type: "flush" }));
+                setStatus("Flushing...");
+                stopBtn.disabled = true;
+            });
+            resetBtn.addEventListener("click", () => {
+                probs = [];
+                segments = [];
+                currentTime = 0;
+                triggered = false;
+                curThreshold = 0.5;
+                segmentCounter = 0;
+                adaptiveInfo.classList.remove("show");
+                segmentsDiv.innerHTML = "";
+                noSegments.style.display = "block";
+                flushSection.classList.remove("show");
+                segCount.textContent = "0";
+                vadCursor.style.display = "none";
+                hideSegmentTooltip();
+                updateStats();
+                if (ws && ws.readyState === WebSocket.OPEN)
+                    ws.send(JSON.stringify({ type: "reset" }));
+                redrawChart();
+            });
+
+            let rt;
+            window.addEventListener("resize", () => {
+                clearTimeout(rt);
+                rt = setTimeout(redrawChart, 200);
+            });
+        </script>
+    </body>
 </html>
