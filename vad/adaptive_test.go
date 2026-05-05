@@ -135,6 +135,63 @@ func TestComputeBaseline(t *testing.T) {
 	}
 }
 
+func TestComputeBaselineAsymmetricUp(t *testing.T) {
+	a := &AdaptiveDetector{
+		inner:      &Detector{minSilenceMs: 500},
+		cfg:        AdaptiveConfig{NoiseFloorFrac: 0.1, BaselineSmoothingFactor: 0.05},
+		frameDB:    make([]float64, 0, 100),
+		capacity:   100,
+		baselineDB: -50,
+	}
+
+	for i := 0; i < 80; i++ {
+		a.addFrame(-40)
+	}
+
+	baseline := a.computeBaseline()
+	if math.Abs(baseline-(-49.5)) > 0.01 {
+		t.Errorf("baseline = %.2f, want -49.5 (slow upward smoothing)", baseline)
+	}
+}
+
+func TestComputeBaselineAsymmetricDown(t *testing.T) {
+	a := &AdaptiveDetector{
+		inner:      &Detector{minSilenceMs: 500},
+		cfg:        AdaptiveConfig{NoiseFloorFrac: 0.1, BaselineSmoothingFactor: 0.05},
+		frameDB:    make([]float64, 0, 100),
+		capacity:   100,
+		baselineDB: -40,
+	}
+
+	for i := 0; i < 80; i++ {
+		a.addFrame(-55)
+	}
+
+	baseline := a.computeBaseline()
+	if math.Abs(baseline-(-55)) > 0.01 {
+		t.Errorf("baseline = %.2f, want -55.0 (immediate downward update)", baseline)
+	}
+}
+
+func TestComputeBaselineFirstCall(t *testing.T) {
+	a := &AdaptiveDetector{
+		inner:      &Detector{minSilenceMs: 500},
+		cfg:        AdaptiveConfig{NoiseFloorFrac: 0.1, BaselineSmoothingFactor: 0.05},
+		frameDB:    make([]float64, 0, 100),
+		capacity:   100,
+		baselineDB: 0,
+	}
+
+	for i := 0; i < 80; i++ {
+		a.addFrame(-40)
+	}
+
+	baseline := a.computeBaseline()
+	if math.Abs(baseline-(-40)) > 0.01 {
+		t.Errorf("baseline = %.2f, want -40.0 (first call uses local estimate)", baseline)
+	}
+}
+
 func TestAdaptiveConfigValidation(t *testing.T) {
 	// Defaults should be set
 	cfg := AdaptiveConfig{
@@ -161,6 +218,9 @@ func TestAdaptiveConfigValidation(t *testing.T) {
 	}
 	if cfg.AdaptMinSpeechMax != 600 {
 		t.Errorf("AdaptMinSpeechMax = %d, want 600", cfg.AdaptMinSpeechMax)
+	}
+	if cfg.BaselineSmoothingFactor != 0.05 {
+		t.Errorf("BaselineSmoothingFactor = %.3f, want 0.05", cfg.BaselineSmoothingFactor)
 	}
 }
 
