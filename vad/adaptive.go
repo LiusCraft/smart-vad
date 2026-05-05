@@ -59,14 +59,15 @@ func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 type AdaptiveConfig struct {
 	DetectorConfig Config
 
-	WindowDuration       float64
-	NoiseFloorFrac       float64 // fraction of quietest frames to average for noise baseline, default 0.1
-	EnergyOffsetDB       float64
-	AdaptThresholdMin    float32
-	AdaptThresholdMax    float32
-	AdaptMinSpeechMin    int
-	AdaptMinSpeechMax    int
-	DisableRMSPostFilter bool
+	WindowDuration          float64
+	NoiseFloorFrac          float64 // fraction of quietest frames to average for noise baseline, default 0.1
+	EnergyOffsetDB          float64
+	AdaptThresholdMin       float32
+	AdaptThresholdMax       float32
+	AdaptMinSpeechMin       int
+	AdaptMinSpeechMax       int
+	DisableRMSPostFilter    bool
+	BaselineSmoothingFactor float64
 }
 
 func (c *AdaptiveConfig) setDefaults() {
@@ -90,6 +91,9 @@ func (c *AdaptiveConfig) setDefaults() {
 	}
 	if c.AdaptMinSpeechMax == 0 {
 		c.AdaptMinSpeechMax = 600
+	}
+	if c.BaselineSmoothingFactor == 0 {
+		c.BaselineSmoothingFactor = 0.05
 	}
 }
 
@@ -160,8 +164,12 @@ func (a *AdaptiveDetector) resetBaseline() {
 func (a *AdaptiveDetector) computeBaseline() float64 {
 	n := len(a.frameDB)
 	if n == 0 {
+		if a.baselineDB != 0 {
+			return a.baselineDB
+		}
 		return -60
 	}
+
 	sorted := make([]float64, n)
 	copy(sorted, a.frameDB)
 	sort.Float64s(sorted)
@@ -176,7 +184,19 @@ func (a *AdaptiveDetector) computeBaseline() float64 {
 	for i := 0; i < count; i++ {
 		sum += sorted[i]
 	}
-	return sum / float64(count)
+	localEstimate := sum / float64(count)
+
+	// Asymmetric smoothing: accept quieter baseline immediately,
+	// follow louder baseline slowly (speech contamination cannot be trusted).
+	if a.baselineDB == 0 {
+		a.baselineDB = localEstimate
+	} else if localEstimate < a.baselineDB {
+		a.baselineDB = localEstimate
+	} else {
+		a.baselineDB += a.cfg.BaselineSmoothingFactor * (localEstimate - a.baselineDB)
+	}
+
+	return a.baselineDB
 }
 
 func (a *AdaptiveDetector) mapParams(baselineDB float64) (threshold float32, minSpeechMs int, minSilenceMs int) {
@@ -199,8 +219,6 @@ func (a *AdaptiveDetector) mapParams(baselineDB float64) (threshold float32, min
 }
 
 func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
-	a.resetBaseline()
-
 	ws := a.frameSize
 	for i := 0; i <= len(pcm)-ws; i += ws {
 		a.addFrame(frameRMS(pcm[i : i+ws]))
@@ -274,9 +292,9 @@ func (a *AdaptiveDetector) Process(chunk []float32) error {
 		a.addFrame(frameRMS(chunk[i : i+ws]))
 	}
 
+	oldBaseline := a.baselineDB
 	baseline := a.computeBaseline()
-	if math.Abs(baseline-a.baselineDB) >= 3 {
-		a.baselineDB = baseline
+	if math.Abs(baseline-oldBaseline) >= 3 {
 		threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
 		logger.Debug("adaptive params updated",
 			"baseline_db", baseline,
