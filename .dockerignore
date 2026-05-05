@@ -1,0 +1,15 @@
+/.git/
+/output/
+/html/*.html
+/cmd/server/server
+/cmd/demo/demo
+/server
+/cli
+*.test
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+Makefile
+README.md
