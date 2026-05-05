@@ -164,10 +164,10 @@ func (a *AdaptiveDetector) resetBaseline() {
 func (a *AdaptiveDetector) computeBaseline() float64 {
 	n := len(a.frameDB)
 	if n == 0 {
-		if a.baselineDB != 0 {
-			return a.baselineDB
+		if a.baselineDB == 0 {
+			a.baselineDB = -60
 		}
-		return -60
+		return a.baselineDB
 	}
 
 	sorted := make([]float64, n)
@@ -225,7 +225,6 @@ func (a *AdaptiveDetector) Detect(pcm []float32) (Result, error) {
 	}
 
 	baseline := a.computeBaseline()
-	a.baselineDB = baseline
 	a.energyOffsetDB = a.cfg.EnergyOffsetDB
 	threshold, minSpeechMs, minSilenceMs := a.mapParams(baseline)
 
