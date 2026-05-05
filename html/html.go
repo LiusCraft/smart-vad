@@ -27,8 +27,14 @@ type ReportData struct {
 	AdaptiveVAD        bool
 	AdaptiveChecked    bool
 	DisableRMSChecked  bool
-	BaselineDB         float64
+	Threshold          float32
+	MinSpeechMs        int
+	MinSilenceMs       int
+	SpeechPadMs        int
+	WindowDuration     float64
+	NoiseFloorFrac     float64
 	EnergyOffsetDB     float64
+	BaselineDB         float64
 }
 
 type Segment struct {
@@ -58,8 +64,14 @@ type reportTmplData struct {
 	AdaptiveVAD               bool
 	AdaptiveChecked           bool
 	DisableRMSChecked         bool
-	BaselineDB                float64
+	Threshold                 float32
+	MinSpeechMs               int
+	MinSilenceMs              int
+	SpeechPadMs               int
+	WindowDuration            string
+	NoiseFloorFrac            string
 	EnergyOffsetDB            float64
+	BaselineDB                float64
 }
 
 func Render(data ReportData, w io.Writer) error {
@@ -99,8 +111,14 @@ func Render(data ReportData, w io.Writer) error {
 		tmplData.AdaptiveVAD = data.AdaptiveVAD
 		tmplData.AdaptiveChecked = data.AdaptiveChecked
 		tmplData.DisableRMSChecked = data.DisableRMSChecked
-		tmplData.BaselineDB = data.BaselineDB
+		tmplData.Threshold = data.Threshold
+		tmplData.MinSpeechMs = data.MinSpeechMs
+		tmplData.MinSilenceMs = data.MinSilenceMs
+		tmplData.SpeechPadMs = data.SpeechPadMs
+		tmplData.WindowDuration = fmt.Sprintf("%.0f", data.WindowDuration)
+		tmplData.NoiseFloorFrac = fmt.Sprintf("%.1f", data.NoiseFloorFrac)
 		tmplData.EnergyOffsetDB = data.EnergyOffsetDB
+		tmplData.BaselineDB = data.BaselineDB
 	}
 
 	tmpl, err := template.New("report").Parse(templates.Report)

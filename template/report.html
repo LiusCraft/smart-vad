@@ -437,6 +437,31 @@
                 letter-spacing: 0.04em;
             }
 
+            .vad-config-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 10px;
+            }
+            .cfg-item {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 10px 14px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .cfg-label {
+                font-size: 13px;
+                color: var(--dim);
+            }
+            .cfg-val {
+                font-size: 14px;
+                font-weight: 600;
+                font-family: var(--font);
+                color: var(--text);
+            }
+
             .section-card {
                 background: var(--surface);
                 border: 1px solid var(--border);
@@ -839,6 +864,22 @@
             </div>
 
             <div class="section-card">
+                <h2>VAD Config</h2>
+                <div class="vad-config-grid">
+                    <div class="cfg-item"><span class="cfg-label">Threshold</span><span class="cfg-val">{{printf "%.2f" .Threshold}}</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Min Speech</span><span class="cfg-val">{{.MinSpeechMs}}ms</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Min Silence</span><span class="cfg-val">{{.MinSilenceMs}}ms</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Speech Pad</span><span class="cfg-val">{{.SpeechPadMs}}ms</span></div>
+                    {{if .AdaptiveVAD}}
+                    <div class="cfg-item"><span class="cfg-label">Window Duration</span><span class="cfg-val">{{.WindowDuration}}s</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Noise Floor Frac</span><span class="cfg-val">{{.NoiseFloorFrac}}</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Energy Offset</span><span class="cfg-val">{{printf "%.1f" .EnergyOffsetDB}} dB</span></div>
+                    <div class="cfg-item"><span class="cfg-label">Baseline</span><span class="cfg-val">{{printf "%.1f" .BaselineDB}} dB</span></div>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="section-card">
                 <h2>Waveform &amp; Playback</h2>
                 <div class="waveform-wrap">
                     <div id="waveform" style="width: 100%; height: 160px"></div>
@@ -881,6 +922,7 @@
                 const sr = {{.SampleRate}};
                 const windowMs = {{.WindowMs}};
                 const adaptiveVAD = {{.AdaptiveVAD}};
+                const vadThreshold = {{.Threshold}};
                 const baselineDB = {{.BaselineDB}};
                 const energyOffsetDB = {{.EnergyOffsetDB}};
                 const pcmLen = {{.PCMLength}};
@@ -973,9 +1015,10 @@
                     html += '<div class="tt-row"><span class="tt-label">Confidence:</span> avg ' + stats.avg.toFixed(3) + ' | min ' + stats.min.toFixed(3) + ' | max ' + stats.max.toFixed(3) + '</div>';
                   }
                   html += '<div class="tt-row"><span class="tt-label">RMS:</span> ' + seg.rms.toFixed(1) + ' dB</div>';
-                  if (adaptiveVAD) {
-                    html += '<div class="tt-row"><span class="tt-label">Baseline:</span> ' + baselineDB.toFixed(1) + ' dB | <span class="tt-label">EnergyOffset:</span> ' + energyOffsetDB.toFixed(1) + ' dB</div>';
-                  }
+                   if (adaptiveVAD) {
+                     html += '<div class="tt-row"><span class="tt-label">Baseline:</span> ' + baselineDB.toFixed(1) + ' dB | <span class="tt-label">EnergyOffset:</span> ' + energyOffsetDB.toFixed(1) + ' dB</div>';
+                   }
+                   html += '<div class="tt-row"><span class="tt-label">Threshold:</span> ' + vadThreshold.toFixed(2) + '</div>';
                   if (isFiltered) {
                     html += '<div class="tt-row" style="color:#e52020">Discarded by energy filter</div>';
                   }
@@ -1007,11 +1050,11 @@
                     ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
                     ctx.fillStyle='#5e5e5e'; ctx.fillText((1-i*0.25).toFixed(2),pad.l-6,y+4);
                   }
-                  const ty=pad.t+ch*(1-0.5);
-                  ctx.strokeStyle='rgba(229,32,32,0.5)'; ctx.setLineDash([4,4]);
-                  ctx.beginPath(); ctx.moveTo(pad.l,ty); ctx.lineTo(W-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
-                  ctx.fillStyle='rgba(229,32,32,0.7)'; ctx.font='9px sans-serif'; ctx.textAlign='left';
-                  ctx.fillText('threshold 0.5',W-pad.r-72,ty-4);
+                   const ty=pad.t+ch*(1-vadThreshold);
+                   ctx.strokeStyle='rgba(229,32,32,0.5)'; ctx.setLineDash([4,4]);
+                   ctx.beginPath(); ctx.moveTo(pad.l,ty); ctx.lineTo(W-pad.r,ty); ctx.stroke(); ctx.setLineDash([]);
+                   ctx.fillStyle='rgba(229,32,32,0.7)'; ctx.font='9px sans-serif'; ctx.textAlign='left';
+                   ctx.fillText('threshold '+vadThreshold.toFixed(2),W-pad.r-80,ty-4);
 
                   if(vadProbs.length<2)return;
                   ctx.strokeStyle='#76b900'; ctx.lineWidth=2; ctx.beginPath();

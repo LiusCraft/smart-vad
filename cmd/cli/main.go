@@ -77,10 +77,11 @@ func main() {
 
 	var result vad.Result
 	var filteredSegments []vad.Segment
+	var adaptDetector *vad.AdaptiveDetector
 
 	if *adaptive {
 		logger.Info("adaptive VAD enabled")
-		adaptDetector, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
+		adaptDetector, err = vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
 				ModelPath:            *model,
 				SampleRate:           sampleRate,
@@ -191,6 +192,14 @@ func main() {
 		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End}
 	}
 
+	var baselineDB, energyOffsetDB, windowDuration, noiseFloorFrac float64
+	if adaptDetector != nil {
+		baselineDB = adaptDetector.BaselineDB()
+		energyOffsetDB = adaptDetector.EnergyOffsetDB()
+		windowDuration = 30
+		noiseFloorFrac = 0.1
+	}
+
 	if err := html.Render(html.ReportData{
 		SampleRate:         sampleRate,
 		Duration:           duration,
@@ -201,6 +210,14 @@ func main() {
 		SegmentFiles:       segFiles,
 		SegmentPCM:         segPCMs,
 		FilteredSegmentPCM: filteredPCMs,
+		Threshold:          float32(*threshold),
+		MinSpeechMs:        *minSpeech,
+		MinSilenceMs:       *minSilence,
+		SpeechPadMs:        *padMs,
+		WindowDuration:     windowDuration,
+		NoiseFloorFrac:     noiseFloorFrac,
+		EnergyOffsetDB:     energyOffsetDB,
+		BaselineDB:         baselineDB,
 	}, rf); err != nil {
 		logger.Fatal("render report failed", "error", err)
 	}

@@ -214,7 +214,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			switch msgType {
 			case "flush":
 				session.flush()
-				return
+				continue
 			case "reset":
 				session.reset()
 			}
@@ -677,10 +677,12 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		htmlFiltered[i] = html.Segment{Start: s.Start, End: s.End, RMS: rms}
 	}
 
-	var baselineDB, energyOffsetDB float64
+	var baselineDB, energyOffsetDB, windowDuration, noiseFloorFrac float64
 	if adaptDetector != nil {
 		baselineDB = adaptDetector.BaselineDB()
 		energyOffsetDB = adaptDetector.EnergyOffsetDB()
+		windowDuration = 30
+		noiseFloorFrac = 0.1
 	}
 
 	var reportBuf bytes.Buffer
@@ -697,8 +699,14 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		BackURL:            "/",
 		HasResults:         true,
 		AdaptiveVAD:        r.FormValue("adaptive") == "true",
-		BaselineDB:         baselineDB,
+		Threshold:          float32(serverThreshold),
+		MinSpeechMs:        100,
+		MinSilenceMs:       100,
+		SpeechPadMs:        30,
+		WindowDuration:     windowDuration,
+		NoiseFloorFrac:     noiseFloorFrac,
 		EnergyOffsetDB:     energyOffsetDB,
+		BaselineDB:         baselineDB,
 	}, &reportBuf); err != nil {
 		logger.Error("render report failed", "error", err)
 		http.Error(w, fmt.Sprintf("render: %v", err), 500)

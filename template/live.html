@@ -652,10 +652,19 @@
                     <div id="vadCursor"></div>
                     <div id="vadTooltip"></div>
                 </div>
+            </div>
+
+            <div class="section-card">
+                <h2>VAD Config</h2>
+                <div id="vadConfig" style="display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(--muted)">
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;gap:16px;min-width:140px"><span style="color:var(--dim)">Threshold</span><span id="currentThreshold" style="color:var(--fg);font-weight:600">0.30</span></div>
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;gap:16px;min-width:140px"><span style="color:var(--dim)">Min Speech</span><span style="color:var(--fg);font-weight:600">100ms</span></div>
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;gap:16px;min-width:140px"><span style="color:var(--dim)">Min Silence</span><span style="color:var(--fg);font-weight:600">100ms</span></div>
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;gap:16px;min-width:140px"><span style="color:var(--dim)">Speech Pad</span><span style="color:var(--fg);font-weight:600">30ms</span></div>
+                </div>
                 <div class="adaptive-info" id="adaptiveInfo">
                     Baseline: <span id="baselineDB">-</span> dB &middot; Energy
-                    Offset: <span id="energyOffsetDB">-</span> dB &middot;
-                    Threshold: <span id="currentThreshold">0.50</span>
+                    Offset: <span id="energyOffsetDB">-</span> dB
                 </div>
             </div>
 
@@ -727,8 +736,8 @@
             let probs = [],
                 segments = [],
                 currentTime = 0,
-                triggered = false,
-                curThreshold = 0.5;
+		triggered = false,
+		curThreshold = 0.3;
             let segmentCounter = 0;
 
             function showError(m) {
@@ -786,7 +795,7 @@
                 };
                 ws.onerror = () => {
                     console.error("WS error");
-                    showError("WebSocket error");
+                    if (isRunning) showError("WebSocket error");
                 };
             }
 
@@ -847,6 +856,7 @@
                         stopBtn.disabled = true;
                         if (msg.merged_audio)
                             mergedAudio.src = msg.merged_audio;
+                        if (ws) { ws.close(1000); ws = null; }
                         break;
                     case "error":
                         showError(msg.message);
@@ -1017,7 +1027,8 @@
                     dur +
                     's)</div><div><span class="tt-label">RMS:</span> ' +
                     (seg.rms || 0).toFixed(1) +
-                    " dB</div>";
+                    " dB</div><div><span class=\"tt-label\">Threshold:</span> " +
+                    curThreshold.toFixed(2) + "</div>";
                 const p = el.parentElement;
                 el.style.left =
                     Math.min(x + 12, p.clientWidth - el.offsetWidth - 4) + "px";
@@ -1193,7 +1204,7 @@
                 segments = [];
                 currentTime = 0;
                 triggered = false;
-                curThreshold = 0.5;
+                curThreshold = 0.3;
                 segmentCounter = 0;
                 adaptiveInfo.classList.remove("show");
                 segmentsDiv.innerHTML = "";
