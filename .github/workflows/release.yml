@@ -67,14 +67,18 @@ jobs:
           codesign --force --sign - smart-vad-cli-${{ matrix.label }}
           codesign --force --sign - libonnxruntime.dylib
 
+      - name: Package
+        run: |
+          tar czf smart-vad-${{ matrix.label }}.tar.gz \
+            smart-vad-server-${{ matrix.label }} \
+            smart-vad-cli-${{ matrix.label }} \
+            libonnxruntime.*
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: smart-vad-${{ matrix.label }}
-          path: |
-            smart-vad-server-${{ matrix.label }}
-            smart-vad-cli-${{ matrix.label }}
-            libonnxruntime.*
+          path: smart-vad-${{ matrix.label }}.tar.gz
 
   release:
     needs: build
@@ -87,8 +91,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            smart-vad-server-*
-            smart-vad-cli-*
-            libonnxruntime.*
+          files: smart-vad-*.tar.gz
           generate_release_notes: true
