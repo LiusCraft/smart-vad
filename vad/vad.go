@@ -76,7 +76,7 @@ func NewDetector(cfg Config) (*Detector, error) {
 	}
 
 	if cfg.Threshold == 0 {
-		cfg.Threshold = 0.5
+		cfg.Threshold = 0.3
 	}
 
 	speechCfg := speech.DetectorConfig{

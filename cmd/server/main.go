@@ -23,11 +23,12 @@ import (
 	"github.com/liushunshun/smart-vad/html"
 	"github.com/liushunshun/smart-vad/logger"
 	"github.com/liushunshun/smart-vad/slice"
-	"github.com/liushunshun/smart-vad/template"
+	templates "github.com/liushunshun/smart-vad/template"
 	"github.com/liushunshun/smart-vad/vad"
 )
 
 var modelPath string
+var serverThreshold float64
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -36,9 +37,11 @@ var upgrader = websocket.Upgrader{
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	model := flag.String("model", "silero_vad.onnx", "path to silero_vad.onnx")
+	threshold := flag.Float64("threshold", 0.3, "VAD threshold")
 	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
 	modelPath = *model
+	serverThreshold = *threshold
 
 	logger.Init(*debug)
 
@@ -141,7 +144,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			DetectorConfig: vad.Config{
 				ModelPath:            modelPath,
 				SampleRate:           16000,
-				Threshold:            0.5,
+				Threshold:            float32(serverThreshold),
 				MinSilenceDurationMs: 100,
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
@@ -162,7 +165,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		d, err := vad.NewDetector(vad.Config{
 			ModelPath:            modelPath,
 			SampleRate:           16000,
-			Threshold:            0.5,
+			Threshold:            float32(serverThreshold),
 			MinSilenceDurationMs: 100,
 			MinSpeechDurationMs:  100,
 			SpeechPadMs:          30,
@@ -573,7 +576,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			DetectorConfig: vad.Config{
 				ModelPath:            modelPath,
 				SampleRate:           16000,
-				Threshold:            0.5,
+				Threshold:            float32(serverThreshold),
 				MinSilenceDurationMs: 100,
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
@@ -601,7 +604,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		detector, err := vad.NewDetector(vad.Config{
 			ModelPath:            modelPath,
 			SampleRate:           16000,
-			Threshold:            0.5,
+			Threshold:            float32(serverThreshold),
 			MinSilenceDurationMs: 100,
 			MinSpeechDurationMs:  100,
 			SpeechPadMs:          30,

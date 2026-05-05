@@ -150,11 +150,11 @@ func TestAdaptiveConfigValidation(t *testing.T) {
 	if cfg.EnergyOffsetDB != 6 {
 		t.Errorf("EnergyOffsetDB = %.0f, want 6", cfg.EnergyOffsetDB)
 	}
-	if cfg.AdaptThresholdMin != 0.5 {
-		t.Errorf("AdaptThresholdMin = %.1f, want 0.5", cfg.AdaptThresholdMin)
+	if cfg.AdaptThresholdMin != 0.3 {
+		t.Errorf("AdaptThresholdMin = %.1f, want 0.3", cfg.AdaptThresholdMin)
 	}
-	if cfg.AdaptThresholdMax != 0.85 {
-		t.Errorf("AdaptThresholdMax = %.2f, want 0.85", cfg.AdaptThresholdMax)
+	if cfg.AdaptThresholdMax != 0.7 {
+		t.Errorf("AdaptThresholdMax = %.2f, want 0.7", cfg.AdaptThresholdMax)
 	}
 	if cfg.AdaptMinSpeechMin != 250 {
 		t.Errorf("AdaptMinSpeechMin = %d, want 250", cfg.AdaptMinSpeechMin)

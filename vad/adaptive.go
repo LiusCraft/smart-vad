@@ -80,10 +80,10 @@ func (c *AdaptiveConfig) setDefaults() {
 		c.EnergyOffsetDB = 6
 	}
 	if c.AdaptThresholdMin == 0 {
-		c.AdaptThresholdMin = 0.5
+		c.AdaptThresholdMin = 0.3
 	}
 	if c.AdaptThresholdMax == 0 {
-		c.AdaptThresholdMax = 0.85
+		c.AdaptThresholdMax = 0.7
 	}
 	if c.AdaptMinSpeechMin == 0 {
 		c.AdaptMinSpeechMin = 250

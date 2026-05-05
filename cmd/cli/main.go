@@ -18,7 +18,7 @@ func main() {
 	input := flag.String("input", "", "input WAV file path (16kHz mono)")
 	model := flag.String("model", "", "path to silero_vad.onnx model")
 	output := flag.String("output", "./output", "output directory")
-	threshold := flag.Float64("threshold", 0.5, "VAD threshold")
+	threshold := flag.Float64("threshold", 0.3, "VAD threshold")
 	minSilence := flag.Int("min-silence", 100, "min silence duration in ms")
 	minSpeech := flag.Int("min-speech", 100, "min speech duration in ms")
 	padMs := flag.Int("pad", 30, "padding around segments in ms")
