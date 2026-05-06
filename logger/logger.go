@@ -16,7 +16,14 @@ func Init(debug bool) {
 	if debug {
 		level = slog.LevelDebug
 	}
-	l = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	var handler slog.Handler
+	if os.Getenv("LOG_FORMAT") == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	}
+	l = slog.New(handler)
 }
 
 func Debug(msg string, args ...any) { l.Debug(msg, args...) }

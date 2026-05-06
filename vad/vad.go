@@ -14,6 +14,7 @@ type Config struct {
 	MinSilenceDurationMs int
 	MinSpeechDurationMs  int
 	SpeechPadMs          int
+	Hysteresis           float32 // offset below threshold to end speech; default 0.15
 }
 
 func (c Config) validate() error {
@@ -60,6 +61,7 @@ type Detector struct {
 	cfg   Config
 
 	threshold    float32
+	hysteresis   float32
 	minSilenceMs int
 	minSpeechMs  int
 
@@ -77,6 +79,9 @@ func NewDetector(cfg Config) (*Detector, error) {
 
 	if cfg.Threshold == 0 {
 		cfg.Threshold = 0.3
+	}
+	if cfg.Hysteresis == 0 {
+		cfg.Hysteresis = 0.15
 	}
 
 	speechCfg := speech.DetectorConfig{
@@ -104,6 +109,7 @@ func NewDetector(cfg Config) (*Detector, error) {
 		inner:        inner,
 		cfg:          cfg,
 		threshold:    cfg.Threshold,
+		hysteresis:   cfg.Hysteresis,
 		minSilenceMs: cfg.MinSilenceDurationMs,
 		minSpeechMs:  cfg.MinSpeechDurationMs,
 	}, nil
@@ -151,7 +157,11 @@ func (d *Detector) Process(chunk []float32) error {
 			d.segments = append(d.segments, Segment{Start: start})
 		}
 
-		if speechProb < (d.threshold-0.15) && d.triggered {
+		hysteresisPoint := d.threshold - d.hysteresis
+		if hysteresisPoint < 0 {
+			hysteresisPoint = 0
+		}
+		if speechProb < hysteresisPoint && d.triggered {
 			if d.tempEnd == 0 {
 				d.tempEnd = d.currSample
 			}
@@ -180,7 +190,7 @@ func (d *Detector) Flush() Result {
 	segments := d.segments
 	if d.minSpeechMs > 0 {
 		minDur := float64(d.minSpeechMs) / 1000
-		filtered := segments[:0]
+		filtered := make([]Segment, 0, len(segments))
 		for _, s := range segments {
 			if s.End-s.Start >= minDur {
 				filtered = append(filtered, s)

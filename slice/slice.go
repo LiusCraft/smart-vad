@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 
 	"github.com/liushunshun/smart-vad/logger"
 )
@@ -75,7 +76,12 @@ func WriteWAV(filename string, pcm []float32, sampleRate int) error {
 
 	samples := make([]int16, numSamples)
 	for i, s := range pcm {
-		samples[i] = int16(math.MaxInt16 * s)
+		if s > 1.0 {
+			s = 1.0
+		} else if s < -1.0 {
+			s = -1.0
+		}
+		samples[i] = int16(s * math.MaxInt16)
 	}
 	if err := binary.Write(f, binary.LittleEndian, samples); err != nil {
 		return fmt.Errorf("write samples: %w", err)
@@ -105,11 +111,35 @@ func Resample(pcm []float32, srcRate, dstRate int) []float32 {
 	return out
 }
 
-func dirname(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			return path[:i]
+// WAVBytes encodes PCM float32 samples to a WAV byte slice (16-bit mono).
+// Samples are clamped to [-1.0, 1.0] before conversion.
+func WAVBytes(pcm []float32, sampleRate int) []byte {
+	n := len(pcm)
+	buf := make([]byte, 44+n*2)
+	copy(buf[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(36+n*2))
+	copy(buf[8:12], "WAVE")
+	copy(buf[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(buf[16:20], 16)
+	binary.LittleEndian.PutUint16(buf[20:22], 1)
+	binary.LittleEndian.PutUint16(buf[22:24], 1)
+	binary.LittleEndian.PutUint32(buf[24:28], uint32(sampleRate))
+	binary.LittleEndian.PutUint32(buf[28:32], uint32(sampleRate*2))
+	binary.LittleEndian.PutUint16(buf[32:34], 2)
+	binary.LittleEndian.PutUint16(buf[34:36], 16)
+	copy(buf[36:40], "data")
+	binary.LittleEndian.PutUint32(buf[40:44], uint32(n*2))
+	for i, s := range pcm {
+		if s > 1.0 {
+			s = 1.0
+		} else if s < -1.0 {
+			s = -1.0
 		}
+		binary.LittleEndian.PutUint16(buf[44+i*2:], uint16(int16(s*math.MaxInt16)))
 	}
-	return ""
+	return buf
+}
+
+func dirname(path string) string {
+	return filepath.Dir(path)
 }

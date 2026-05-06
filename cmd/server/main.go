@@ -2,19 +2,23 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/go-audio/wav"
@@ -27,41 +31,327 @@ import (
 	"github.com/liushunshun/smart-vad/vad"
 )
 
-var modelPath string
-var serverThreshold float64
+// ---- Environment helpers ----
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
-func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	model := flag.String("model", "silero_vad.onnx", "path to silero_vad.onnx")
-	threshold := flag.Float64("threshold", 0.3, "VAD threshold")
-	debug := flag.Bool("debug", false, "enable debug logging")
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+// ---- Server configuration ----
+
+type serverConfig struct {
+	Addr           string
+	ModelPath      string
+	Threshold      float64
+	Debug          bool
+	WSToken        string
+	MaxUploadMB    int
+	MaxPCMDurSec   int
+	MaxWSPCMDurSec int
+	WSMaxConns     int
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	IdleTimeout    time.Duration
+	AllowedOrigins []string
+	PprofEnabled   bool
+}
+
+func loadConfig() serverConfig {
+	addr := flag.String("addr", getEnv("SMART_VAD_ADDR", ":8080"), "listen address")
+	model := flag.String("model", getEnv("SMART_VAD_MODEL", "silero_vad.onnx"), "path to silero_vad.onnx")
+	threshold := flag.Float64("threshold", getEnvFloat("SMART_VAD_THRESHOLD", 0.3), "VAD threshold")
+	debug := flag.Bool("debug", getEnvBool("SMART_VAD_DEBUG", false), "enable debug logging")
+	wsToken := flag.String("ws-token", getEnv("SMART_VAD_WS_TOKEN", ""), "WebSocket auth token (required if set)")
+
+	maxUploadMB := flag.Int("max-upload-mb", getEnvInt("SMART_VAD_MAX_UPLOAD_MB", 500), "max upload size in MB")
+	maxPCMDurSec := flag.Int("max-pcm-dur", getEnvInt("SMART_VAD_MAX_PCM_DUR", 600), "max audio duration in seconds")
+	maxWSPCMDurSec := flag.Int("max-ws-pcm-dur", getEnvInt("SMART_VAD_MAX_WS_PCM_DUR", 120), "max buffered PCM seconds per WS session")
+	wsMaxConns := flag.Int("ws-max-conns", getEnvInt("SMART_VAD_WS_MAX_CONNS", 10), "max concurrent WebSocket connections")
+
+	readTimeout := flag.Duration("read-timeout", getEnvDuration("SMART_VAD_READ_TIMEOUT", 30*time.Second), "HTTP read timeout")
+	writeTimeout := flag.Duration("write-timeout", getEnvDuration("SMART_VAD_WRITE_TIMEOUT", 60*time.Second), "HTTP write timeout")
+	idleTimeout := flag.Duration("idle-timeout", getEnvDuration("SMART_VAD_IDLE_TIMEOUT", 120*time.Second), "HTTP idle timeout")
+
+	allowedOrigins := flag.String("allowed-origins", getEnv("SMART_VAD_ALLOWED_ORIGINS", ""), "comma-separated allowed WebSocket origins")
+	pprofEnabled := flag.Bool("pprof", getEnvBool("SMART_VAD_PPROF", false), "enable /debug/pprof endpoints")
+
 	flag.Parse()
-	modelPath = *model
-	serverThreshold = *threshold
 
-	logger.Init(*debug)
+	cfg := serverConfig{
+		Addr:           *addr,
+		ModelPath:      *model,
+		Threshold:      *threshold,
+		Debug:          *debug,
+		WSToken:        *wsToken,
+		MaxUploadMB:    *maxUploadMB,
+		MaxPCMDurSec:   *maxPCMDurSec,
+		MaxWSPCMDurSec: *maxWSPCMDurSec,
+		WSMaxConns:     *wsMaxConns,
+		ReadTimeout:    *readTimeout,
+		WriteTimeout:   *writeTimeout,
+		IdleTimeout:    *idleTimeout,
+		PprofEnabled:   *pprofEnabled,
+	}
 
-	check.ModelExists(modelPath)
+	if *allowedOrigins != "" {
+		cfg.AllowedOrigins = strings.Split(*allowedOrigins, ",")
+		for i := range cfg.AllowedOrigins {
+			cfg.AllowedOrigins[i] = strings.TrimSpace(cfg.AllowedOrigins[i])
+		}
+	}
+
+	return cfg
+}
+
+// ---- Origin checker ----
+
+func buildOriginChecker(allowed []string) func(r *http.Request) bool {
+	if len(allowed) == 0 {
+		return func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			return strings.HasPrefix(origin, "http://localhost") ||
+				strings.HasPrefix(origin, "http://127.0.0.1")
+		}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		for _, a := range allowed {
+			if a == "*" || strings.HasPrefix(origin, a) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// ---- Rate limiter ----
+
+type rateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*rateVisitor
+}
+
+type rateVisitor struct {
+	tokens   float64
+	lastTime time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	rl := &rateLimiter{visitors: make(map[string]*rateVisitor)}
+	go rl.reap()
+	return rl
+}
+
+func (rl *rateLimiter) allow(ip string, ratePerSec float64, burst int) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	v, ok := rl.visitors[ip]
+	if !ok {
+		rl.visitors[ip] = &rateVisitor{tokens: float64(burst - 1), lastTime: now}
+		return true
+	}
+
+	elapsed := now.Sub(v.lastTime).Seconds()
+	v.tokens = math.Min(float64(burst), v.tokens+elapsed*ratePerSec)
+	v.lastTime = now
+
+	if v.tokens >= 1 {
+		v.tokens--
+		return true
+	}
+	return false
+}
+
+func (rl *rateLimiter) reap() {
+	for {
+		time.Sleep(time.Minute)
+		rl.mu.Lock()
+		for ip, v := range rl.visitors {
+			if time.Since(v.lastTime) > 5*time.Minute {
+				delete(rl.visitors, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+// ---- WebSocket connection tracker ----
+
+type wsConnTracker struct {
+	mu    sync.Mutex
+	count int
+	max   int
+}
+
+func (t *wsConnTracker) acquire() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.count >= t.max {
+		return false
+	}
+	t.count++
+	return true
+}
+
+func (t *wsConnTracker) release() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.count--
+}
+
+// ---- Server state ----
+
+var (
+	cfg      serverConfig
+	upgrader websocket.Upgrader
+	wsTrack  wsConnTracker
+	limiter  *rateLimiter
+	ready    atomic.Bool
+)
+
+func main() {
+	cfg = loadConfig()
+	logger.Init(cfg.Debug)
+
+	check.ModelExists(cfg.ModelPath)
+
+	upgrader = websocket.Upgrader{
+		CheckOrigin: buildOriginChecker(cfg.AllowedOrigins),
+	}
+
+	wsTrack = wsConnTracker{max: cfg.WSMaxConns}
+	limiter = newRateLimiter()
+
+	// Preload model to validate and warm up
+	go func() {
+		d, err := vad.NewDetector(vad.Config{
+			ModelPath:  cfg.ModelPath,
+			SampleRate: 16000,
+			Threshold:  float32(cfg.Threshold),
+		})
+		if err != nil {
+			logger.Error("model preload failed", "error", err)
+			return
+		}
+		d.Destroy()
+		ready.Store(true)
+		logger.Info("model preloaded successfully")
+	}()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/ready", handleReady)
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/live", handleLive)
 	mux.HandleFunc("/ws", handleWS)
 	mux.HandleFunc("/analyze", handleAnalyze)
 
-	listener, err := net.Listen("tcp", *addr)
-	if err != nil {
-		logger.Fatal("listen failed", "addr", *addr, "error", err)
+	if cfg.PprofEnabled {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
-	*addr = listener.Addr().String()
 
-	logger.Info("server started", "addr", *addr)
-	logger.Fatal("server stopped", "error", http.Serve(listener, mux))
+	srv := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
+	}
+
+	// Graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigCh
+		logger.Info("received signal, shutting down gracefully", "signal", sig.String())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.Error("graceful shutdown error", "error", err)
+		}
+	}()
+
+	logger.Info("server started", "addr", cfg.Addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Fatal("server stopped unexpectedly", "error", err)
+	}
+	logger.Info("server stopped")
 }
+
+// ---- Health / Ready ----
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if ready.Load() {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	} else {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("not ready: model loading"))
+	}
+}
+
+// ---- Cookie helpers ----
 
 func readCookieBool(r *http.Request, name string) bool {
 	c, err := r.Cookie(name)
@@ -79,6 +369,8 @@ func setCookieBool(w http.ResponseWriter, name string, val bool) {
 		MaxAge: 86400 * 365,
 	})
 }
+
+// ---- Page handlers ----
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
@@ -116,11 +408,37 @@ type wsSession struct {
 
 	triggered bool
 
-	// Accumulated PCM for flush
-	pcmBuf []float32
+	// Accumulated PCM for flush, capped to maxPCMDurSec
+	pcmBuf       []float32
+	maxPCMLen    int // max samples to buffer (maxWSPCMDurSec * sampleRate)
+	sampleOffset int // offset into the logical stream for pcmBuf trimming
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {
+	// Token auth
+	if cfg.WSToken != "" {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			token = r.Header.Get("Authorization")
+			token = strings.TrimPrefix(token, "Bearer ")
+		}
+		if token != cfg.WSToken {
+			logger.Warn("websocket auth rejected", "remote", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Connection limit
+	if !wsTrack.acquire() {
+		logger.Warn("websocket connection rejected: max connections reached",
+			"remote", r.RemoteAddr,
+			"max", cfg.WSMaxConns)
+		http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	defer wsTrack.release()
+
 	logger.Debug("websocket connection request",
 		"remote", r.RemoteAddr,
 		"adaptive", r.URL.Query().Get("adaptive"))
@@ -136,15 +454,19 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	session := &wsSession{conn: conn}
+	session.maxPCMLen = cfg.MaxWSPCMDurSec * 16000
+
+	// Set read deadline for the first message
+	conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 	adaptive := r.URL.Query().Get("adaptive") == "true"
 	disableRMS := r.URL.Query().Get("disable_rms") == "true"
 	if adaptive {
 		ad, err := vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
-				ModelPath:            modelPath,
+				ModelPath:            cfg.ModelPath,
 				SampleRate:           16000,
-				Threshold:            float32(serverThreshold),
+				Threshold:            float32(cfg.Threshold),
 				MinSilenceDurationMs: 100,
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
@@ -156,16 +478,15 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
 			return
 		}
-		logger.Debug("adaptive detector created",
-			"disable_rms", disableRMS)
+		logger.Debug("adaptive detector created", "disable_rms", disableRMS)
 		session.adaptDetector = ad
 		session.detector = ad.Inner()
 		defer ad.Destroy()
 	} else {
 		d, err := vad.NewDetector(vad.Config{
-			ModelPath:            modelPath,
+			ModelPath:            cfg.ModelPath,
 			SampleRate:           16000,
-			Threshold:            float32(serverThreshold),
+			Threshold:            float32(cfg.Threshold),
 			MinSilenceDurationMs: 100,
 			MinSpeechDurationMs:  100,
 			SpeechPadMs:          30,
@@ -201,6 +522,9 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			logger.Debug("websocket read closed", "messages_processed", msgCount)
 			break
 		}
+
+		// Refresh read deadline on each message
+		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 		msgCount++
 
@@ -256,21 +580,27 @@ func (s *wsSession) processChunk(pcm []float32) {
 	start := time.Now()
 	if s.adaptDetector != nil {
 		if err := s.adaptDetector.Process(pcm); err != nil {
-			s.conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
+			s.writeErr("adaptive process chunk failed", err)
 			logger.Error("adaptive process chunk failed", "error", err)
 			return
 		}
 	} else {
 		if err := s.detector.Process(pcm); err != nil {
-			s.conn.WriteJSON(map[string]string{"type": "error", "message": err.Error()})
+			s.writeErr("process chunk failed", err)
 			logger.Error("process chunk failed", "error", err)
 			return
 		}
 	}
 	logger.Debug("chunk processed", "samples", len(pcm), "duration_us", time.Since(start).Microseconds())
 
-	// Accumulate PCM for potential flush
+	// Accumulate PCM for potential flush, with cap
 	s.pcmBuf = append(s.pcmBuf, pcm...)
+	if len(s.pcmBuf) > s.maxPCMLen {
+		// Trim oldest samples, adjust sample offset
+		excess := len(s.pcmBuf) - s.maxPCMLen
+		s.pcmBuf = s.pcmBuf[excess:]
+		s.sampleOffset += excess
+	}
 
 	curProbs := s.detector.GetProbs()
 	curSegs := s.detector.GetSegments()
@@ -280,31 +610,30 @@ func (s *wsSession) processChunk(pcm []float32) {
 		newProbs := curProbs[prevProbsLen:]
 		probs32 := make([]float32, len(newProbs))
 		copy(probs32, newProbs)
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":  "probs",
 			"probs": probs32,
 		})
 	}
 
-	// Detect segment_end: the segment at prevSegLen-1 was unclosed (End==0)
-	// and is now closed (End>0). Only the last segment can be unclosed.
+	// Detect segment_end
 	if prevSegLen > 0 && prevLastEnd == 0 && prevSegLen <= len(curSegs) && curSegs[prevSegLen-1].End > 0 {
 		closed := curSegs[prevSegLen-1]
 		rms := 0.0
-		startSample := int(math.Round(closed.Start * 16000))
-		endSample := int(math.Round(closed.End * 16000))
 		var audioData string
+		startSample := int(math.Round(closed.Start*16000)) - s.sampleOffset
+		endSample := int(math.Round(closed.End*16000)) - s.sampleOffset
 		if startSample >= 0 && endSample <= len(s.pcmBuf) && startSample < endSample {
 			segPCM := s.pcmBuf[startSample:endSample]
 			rms = vad.RMS(segPCM)
-			wav := pcmToWAVBytes(segPCM, 16000)
-			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
+			wavBytes := slice.WAVBytes(segPCM, 16000)
+			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavBytes)
 		}
 		logger.Debug("segment ended",
 			"start", closed.Start,
 			"end", closed.End,
 			"rms_db", rms)
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":  "segment_end",
 			"start": closed.Start,
 			"end":   closed.End,
@@ -316,7 +645,7 @@ func (s *wsSession) processChunk(pcm []float32) {
 	// Detect new segment starts
 	for i := prevSegLen; i < len(curSegs); i++ {
 		logger.Debug("segment started", "start", curSegs[i].Start)
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":  "segment_start",
 			"start": curSegs[i].Start,
 		})
@@ -327,7 +656,7 @@ func (s *wsSession) processChunk(pcm []float32) {
 	if curTriggered != s.triggered {
 		s.triggered = curTriggered
 		logger.Debug("vad state changed", "triggered", curTriggered)
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":      "state",
 			"triggered": curTriggered,
 		})
@@ -335,18 +664,18 @@ func (s *wsSession) processChunk(pcm []float32) {
 
 	// Progress
 	currentTime := float64(s.detector.CurrentSample()) / 16000
-	s.conn.WriteJSON(map[string]interface{}{
+	s.writeJSON(map[string]interface{}{
 		"type": "progress",
 		"time": currentTime,
 	})
 
 	// Adaptive threshold update
 	if s.adaptDetector != nil {
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":      "threshold",
 			"threshold": s.detector.GetThreshold(),
 		})
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":             "adaptive_info",
 			"baseline_db":      s.adaptDetector.BaselineDB(),
 			"energy_offset_db": s.adaptDetector.EnergyOffsetDB(),
@@ -372,16 +701,16 @@ func (s *wsSession) flush() {
 	if hadOpen && len(result.Segments) > 0 {
 		last := result.Segments[len(result.Segments)-1]
 		rms := 0.0
-		startSample := int(math.Round(last.Start * 16000))
-		endSample := int(math.Round(last.End * 16000))
 		var audioData string
+		startSample := int(math.Round(last.Start*16000)) - s.sampleOffset
+		endSample := int(math.Round(last.End*16000)) - s.sampleOffset
 		if startSample >= 0 && endSample <= len(s.pcmBuf) && startSample < endSample {
 			segPCM := s.pcmBuf[startSample:endSample]
 			rms = vad.RMS(segPCM)
-			wav := pcmToWAVBytes(segPCM, 16000)
-			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wav)
+			wavBytes := slice.WAVBytes(segPCM, 16000)
+			audioData = "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavBytes)
 		}
-		s.conn.WriteJSON(map[string]interface{}{
+		s.writeJSON(map[string]interface{}{
 			"type":  "segment_end",
 			"start": last.Start,
 			"end":   last.End,
@@ -395,8 +724,8 @@ func (s *wsSession) flush() {
 	if len(result.Segments) > 0 && len(s.pcmBuf) > 0 {
 		mergedPCM := make([]float32, 0)
 		for _, seg := range result.Segments {
-			startSample := int(math.Round(seg.Start * 16000))
-			endSample := int(math.Round(seg.End * 16000))
+			startSample := int(math.Round(seg.Start*16000)) - s.sampleOffset
+			endSample := int(math.Round(seg.End*16000)) - s.sampleOffset
 			if startSample < 0 {
 				startSample = 0
 			}
@@ -409,7 +738,7 @@ func (s *wsSession) flush() {
 			mergedPCM = append(mergedPCM, s.pcmBuf[startSample:endSample]...)
 		}
 		if len(mergedPCM) > 0 {
-			mergedWAV = pcmToWAVBytes(mergedPCM, 16000)
+			mergedWAV = slice.WAVBytes(mergedPCM, 16000)
 		}
 	}
 
@@ -430,47 +759,30 @@ func (s *wsSession) flush() {
 		b64 := base64.StdEncoding.EncodeToString(mergedWAV)
 		resp["merged_audio"] = "data:audio/wav;base64," + b64
 	}
-	s.conn.WriteJSON(resp)
+	s.writeJSON(resp)
 }
 
 func (s *wsSession) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	logger.Debug("session reset",
-		"buffered_samples", len(s.pcmBuf))
+	logger.Debug("session reset", "buffered_samples", len(s.pcmBuf))
 	s.detector.Reset()
 	s.pcmBuf = s.pcmBuf[:0]
+	s.sampleOffset = 0
 	s.triggered = false
 }
 
-func pcmToWAVBytes(pcm []float32, sampleRate int) []byte {
-	n := len(pcm)
-	buf := make([]byte, 44+n*2)
-	copy(buf[0:4], "RIFF")
-	put32(buf[4:8], uint32(36+n*2))
-	copy(buf[8:12], "WAVE")
-	copy(buf[12:16], "fmt ")
-	put32(buf[16:20], 16)
-	put16(buf[20:22], 1)
-	put16(buf[22:24], 1)
-	put32(buf[24:28], uint32(sampleRate))
-	put32(buf[28:32], uint32(sampleRate*2))
-	put16(buf[32:34], 2)
-	put16(buf[34:36], 16)
-	copy(buf[36:40], "data")
-	put32(buf[40:44], uint32(n*2))
-	for i, s := range pcm {
-		v := int16(s * math.MaxInt16)
-		if s < 0 {
-			v = int16(s * 0x8000)
-		}
-		put16(buf[44+i*2:], uint16(v))
+// writeJSON sends a JSON message to the WebSocket client. Write errors are logged
+// and the connection is assumed dead (the caller should avoid further writes).
+func (s *wsSession) writeJSON(v interface{}) {
+	if err := s.conn.WriteJSON(v); err != nil {
+		logger.Debug("websocket write failed, client likely disconnected", "error", err)
 	}
-	return buf
 }
 
-func put16(buf []byte, v uint16) { binary.LittleEndian.PutUint16(buf, v) }
-func put32(buf []byte, v uint32) { binary.LittleEndian.PutUint32(buf, v) }
+func (s *wsSession) writeErr(context string, err error) {
+	s.writeJSON(map[string]string{"type": "error", "message": context + ": " + err.Error()})
+}
 
 // ---- Analyze handler ----
 
@@ -480,10 +792,28 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limit: 10 req/min per IP
+	ip := r.RemoteAddr
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		ip = strings.Split(fwd, ",")[0]
+	}
+	if !limiter.allow(ip, 10.0/60.0, 5) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
 	logger.Debug("analyze request", "remote", r.RemoteAddr)
+
+	// Limit upload size
+	maxBodyBytes := int64(cfg.MaxUploadMB) * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
 	file, _, err := r.FormFile("audio")
 	if err != nil {
+		if strings.Contains(err.Error(), "http: request body too large") {
+			http.Error(w, fmt.Sprintf("upload too large (max %d MB)", cfg.MaxUploadMB), http.StatusRequestEntityTooLarge)
+			return
+		}
 		logger.Warn("analyze: missing audio file", "error", err)
 		http.Error(w, "missing audio file", 400)
 		return
@@ -532,9 +862,20 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("read PCM: %v", err), 500)
 		return
 	}
+	if buf == nil {
+		http.Error(w, "empty audio", 400)
+		return
+	}
 
 	pcm := buf.AsFloat32Buffer().Data
 	sr := int(dec.SampleRate)
+
+	// Limit PCM duration
+	maxSamples := cfg.MaxPCMDurSec * sr
+	if len(pcm) > maxSamples {
+		http.Error(w, fmt.Sprintf("audio too long: max %d seconds", cfg.MaxPCMDurSec), http.StatusRequestEntityTooLarge)
+		return
+	}
 
 	targetSR := 0
 	fmt.Sscanf(r.FormValue("samplerate"), "%d", &targetSR)
@@ -574,9 +915,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	if adaptiveOn {
 		adaptDetector, err = vad.NewAdaptiveDetector(vad.AdaptiveConfig{
 			DetectorConfig: vad.Config{
-				ModelPath:            modelPath,
+				ModelPath:            cfg.ModelPath,
 				SampleRate:           16000,
-				Threshold:            float32(serverThreshold),
+				Threshold:            float32(cfg.Threshold),
 				MinSilenceDurationMs: 100,
 				MinSpeechDurationMs:  100,
 				SpeechPadMs:          30,
@@ -602,9 +943,9 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			"energy_offset_db", adaptDetector.EnergyOffsetDB())
 	} else {
 		detector, err := vad.NewDetector(vad.Config{
-			ModelPath:            modelPath,
+			ModelPath:            cfg.ModelPath,
 			SampleRate:           16000,
-			Threshold:            float32(serverThreshold),
+			Threshold:            float32(cfg.Threshold),
 			MinSilenceDurationMs: 100,
 			MinSpeechDurationMs:  100,
 			SpeechPadMs:          30,
@@ -640,10 +981,17 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	segFiles := make([]string, len(segPCMs))
 	segDir := filepath.Join(tmpDir, "segments")
-	os.MkdirAll(segDir, 0755)
+	if err := os.MkdirAll(segDir, 0755); err != nil {
+		logger.Error("create segments dir failed", "error", err)
+		http.Error(w, "create segments dir failed", 500)
+		return
+	}
 	for i, seg := range segPCMs {
 		fname := filepath.Join(segDir, fmt.Sprintf("seg-%03d.wav", i+1))
-		slice.WriteWAV(fname, seg, srInt)
+		if err := slice.WriteWAV(fname, seg, srInt); err != nil {
+			logger.Error("write segment failed", "error", err)
+			continue
+		}
 		segFiles[i] = fname
 	}
 
@@ -699,7 +1047,7 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		BackURL:            "/",
 		HasResults:         true,
 		AdaptiveVAD:        r.FormValue("adaptive") == "true",
-		Threshold:          float32(serverThreshold),
+		Threshold:          float32(cfg.Threshold),
 		MinSpeechMs:        100,
 		MinSilenceMs:       100,
 		SpeechPadMs:        30,

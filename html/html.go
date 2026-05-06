@@ -3,14 +3,16 @@ package html
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"html/template"
 	"io"
-	"math"
 
-	"github.com/liushunshun/smart-vad/template"
+	templates "github.com/liushunshun/smart-vad/template"
+
+	"github.com/liushunshun/smart-vad/slice"
 )
+
+var reportTmpl = template.Must(template.New("report").Parse(templates.Report))
 
 type ReportData struct {
 	SampleRate         int
@@ -121,12 +123,7 @@ func Render(data ReportData, w io.Writer) error {
 		tmplData.BaselineDB = data.BaselineDB
 	}
 
-	tmpl, err := template.New("report").Parse(templates.Report)
-	if err != nil {
-		return fmt.Errorf("parse template: %w", err)
-	}
-
-	return tmpl.Execute(w, tmplData)
+	return reportTmpl.Execute(w, tmplData)
 }
 
 func encodeFloat32Array(data []float32) string {
@@ -175,35 +172,10 @@ func encodeSegmentAudios(segments [][]float32, sampleRate int) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		wavData := pcmToWAVBytes(seg, sampleRate)
+		wavData := slice.WAVBytes(seg, sampleRate)
 		b64 := base64.StdEncoding.EncodeToString(wavData)
 		fmt.Fprintf(&b, `"data:audio/wav;base64,%s"`, b64)
 	}
 	b.WriteByte(']')
 	return b.String()
 }
-
-func pcmToWAVBytes(pcm []float32, sampleRate int) []byte {
-	n := len(pcm)
-	buf := make([]byte, 44+n*2)
-	copy(buf[0:4], "RIFF")
-	put32(buf[4:8], uint32(36+n*2))
-	copy(buf[8:12], "WAVE")
-	copy(buf[12:16], "fmt ")
-	put32(buf[16:20], 16)
-	put16(buf[20:22], 1)
-	put16(buf[22:24], 1)
-	put32(buf[24:28], uint32(sampleRate))
-	put32(buf[28:32], uint32(sampleRate*2))
-	put16(buf[32:34], 2)
-	put16(buf[34:36], 16)
-	copy(buf[36:40], "data")
-	put32(buf[40:44], uint32(n*2))
-	for i, s := range pcm {
-		put16(buf[44+i*2:], uint16(int16(math.MaxInt16*s)))
-	}
-	return buf
-}
-
-func put16(buf []byte, v uint16) { binary.LittleEndian.PutUint16(buf, v) }
-func put32(buf []byte, v uint32) { binary.LittleEndian.PutUint32(buf, v) }

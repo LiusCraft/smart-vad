@@ -10,7 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+const maxModelDownloadBytes = 200 * 1024 * 1024 // 200 MB
 
 const (
 	owner        = "snakers4"
@@ -78,7 +83,7 @@ func askWhoInstalls() string {
 }
 
 func fetchTags() []string {
-	resp, err := http.Get(tagsAPI)
+	resp, err := httpClient.Get(tagsAPI)
 	if err != nil {
 		return nil
 	}
@@ -89,7 +94,7 @@ func fetchTags() []string {
 	}
 
 	var result []struct{ Name string }
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil
 	}
 
@@ -133,7 +138,7 @@ func downloadModel(path, version string) error {
 	url := fmt.Sprintf(modelPathFmt, version)
 	fmt.Fprintf(os.Stderr, "Downloading silero_vad.onnx (version %s)...\n", version)
 
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -156,7 +161,7 @@ func downloadModel(path, version string) error {
 	}
 	defer f.Close()
 
-	written, err := io.Copy(f, resp.Body)
+	written, err := io.Copy(f, io.LimitReader(resp.Body, maxModelDownloadBytes))
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
